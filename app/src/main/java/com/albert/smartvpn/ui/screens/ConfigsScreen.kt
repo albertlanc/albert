@@ -13,14 +13,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
-import com.albert.smartvpn.data.Profile
+import com.albert.smartvpn.data.VpnProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigsScreen(
-    profiles: List<Profile>,
-    onSelectProfile: (Profile) -> Unit,
-    onDeleteProfile: (Profile) -> Unit,
+    profiles: List<VpnProfile>,
+    onSelectProfile: (VpnProfile) -> Unit,
+    onDeleteProfile: (VpnProfile) -> Unit,
     onImportClipboard: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -50,8 +50,7 @@ fun ConfigsScreen(
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-                // Explicitly defining the type here fixes the "Cannot infer a type" crash
-                items(profiles) { profile: Profile ->
+                items(profiles) { profile: VpnProfile ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
