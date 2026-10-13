@@ -4,6 +4,11 @@ plugins {
     id("kotlin-kapt") // Required for Room Database compilation
 }
 
+// Prevents Compose annotation crashes during Room/KAPT compilation
+kapt {
+    correctErrorTypes = true
+}
+
 android {
     namespace = "com.albert.smartvpn"
     compileSdk = 34
