@@ -2,9 +2,7 @@ package com.albert.smartvpn.engine
 
 import android.util.Log
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
-import java.net.InetSocketAddress
 import java.net.ServerSocket
 import kotlin.concurrent.thread
 
@@ -14,9 +12,6 @@ object SshEngine {
     private var isRunning = false
     private var localServer: ServerSocket? = null
 
-    /**
-     * Connects to the SSH server and opens a local port for routing traffic.
-     */
     fun startSshTunnel(
         host: String,
         port: Int,
@@ -30,12 +25,11 @@ object SshEngine {
         
         return try {
             sshClient = SSHClient().apply {
-                addHostKeyVerifier(PromiscuousVerifier()) // Bypasses strict host key checking for dynamic servers
+                addHostKeyVerifier(PromiscuousVerifier())
                 connectTimeout = 15000
-                timeout = 0 // Keep-alive indefinitely
+                timeout = 0
             }
 
-            // TODO: Implement raw Socket proxy injection here for `payloadTemplate` before sshClient.connect()
             Log.d(TAG, "Connecting to SSH Server $host:$port...")
             sshClient?.connect(host, port)
             
@@ -62,11 +56,12 @@ object SshEngine {
         thread(start = true, name = "SSH-Local-Forward") {
             try {
                 localServer = ServerSocket(localPort)
-                val params = LocalPortForwarder.Parameters(
+                // Fully qualify the class to bypass the compiler error
+                val params = net.schmizz.sshj.connection.channel.direct.LocalPortForwarder.Parameters(
                     "0.0.0.0", localPort, "127.0.0.1", 80
                 )
                 val forwarder = sshClient?.newLocalPortForwarder(params, localServer)
-                forwarder?.listen() // Blocks and routes traffic indefinitely
+                forwarder?.listen()
             } catch (e: Exception) {
                 if (isRunning) Log.e(TAG, "Port forwarder dropped: ${e.message}")
             }
