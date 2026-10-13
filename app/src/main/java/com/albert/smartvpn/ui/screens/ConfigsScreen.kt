@@ -13,7 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
-import com.albert.smartvpn.data.* // Wildcard ensures Profile is found
+import com.albert.smartvpn.data.Profile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,8 +50,8 @@ fun ConfigsScreen(
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-                // Explicitly naming the parameter fixes the Int type mismatch
-                items(items = profiles) { profile ->
+                // Explicitly defining the type here fixes the "Cannot infer a type" crash
+                items(profiles) { profile: Profile ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
