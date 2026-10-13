@@ -53,6 +53,11 @@ jobs:
           cp -r libs/* ../app/src/main/jniLibs/
           cd ..
 
+      - name: Setup Gradle 8.6
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
 
