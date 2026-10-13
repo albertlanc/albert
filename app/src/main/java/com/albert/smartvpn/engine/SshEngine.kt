@@ -2,6 +2,7 @@ package com.albert.smartvpn.engine
 
 import android.util.Log
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.net.ServerSocket
 import kotlin.concurrent.thread
@@ -56,10 +57,7 @@ object SshEngine {
         thread(start = true, name = "SSH-Local-Forward") {
             try {
                 localServer = ServerSocket(localPort)
-                // Fully qualify the class to bypass the compiler error
-                val params = net.schmizz.sshj.connection.channel.direct.LocalPortForwarder.Parameters(
-                    "0.0.0.0", localPort, "127.0.0.1", 80
-                )
+                val params = LocalPortForwarder.Parameters("0.0.0.0", localPort, "127.0.0.1", 80)
                 val forwarder = sshClient?.newLocalPortForwarder(params, localServer)
                 forwarder?.listen()
             } catch (e: Exception) {
