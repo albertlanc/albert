@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import com.albert.smartvpn.ui.screens.ConfigsScreen
 import com.albert.smartvpn.ui.screens.HomeScreen
 import com.albert.smartvpn.ui.screens.LogsScreen
+import com.albert.smartvpn.ui.screens.NetworkToolsScreen
 import com.albert.smartvpn.ui.theme.SmartVpnTheme
 import com.albert.smartvpn.ui.viewmodel.VpnViewModel
 import com.albert.smartvpn.vpn.SmartVpnService
@@ -65,6 +67,12 @@ class MainActivity : ComponentActivity() {
                                 icon = { Icon(Icons.Default.Article, contentDescription = null) },
                                 label = { Text("Logs") }
                             )
+                            NavigationBarItem(
+                                selected = selectedTab == 3,
+                                onClick = { selectedTab = 3 },
+                                icon = { Icon(Icons.Default.Build, contentDescription = null) },
+                                label = { Text("Tools") }
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -84,6 +92,9 @@ class MainActivity : ComponentActivity() {
                         )
                         2 -> LogsScreen(
                             logs = viewModel.logs.collectAsState().value,
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                        3 -> NetworkToolsScreen(
                             modifier = Modifier.padding(innerPadding)
                         )
                     }
