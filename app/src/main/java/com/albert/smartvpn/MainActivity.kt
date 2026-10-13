@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
@@ -85,7 +84,7 @@ class MainActivity : ComponentActivity() {
                         )
                         1 -> ConfigsScreen(
                             profiles = profiles,
-                            onSelectProfile = { viewModel.selectProfile(it) },
+                            onSelectProfile = { viewModel.selectProfile(it.id) },
                             onDeleteProfile = { viewModel.deleteProfile(it) },
                             onImportClipboard = { viewModel.importFromClipboard(it) },
                             modifier = Modifier.padding(innerPadding)
