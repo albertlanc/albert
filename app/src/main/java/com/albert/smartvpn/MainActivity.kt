@@ -13,8 +13,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -31,6 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -72,7 +77,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
@@ -81,7 +85,7 @@ class MainActivity : ComponentActivity() {
             SmartVpnTheme {
                 var showSplash by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
-                    delay(2300L)
+                    delay(2800L)
                     showSplash = false
                 }
 
@@ -93,7 +97,7 @@ class MainActivity : ComponentActivity() {
                         enter = fadeIn(),
                         exit = fadeOut()
                     ) {
-                        CyberSplashScreen()
+                        QuantumCyberSplashScreen()
                     }
                 }
             }
@@ -121,7 +125,7 @@ class MainActivity : ComponentActivity() {
             drawerState = drawerState,
             drawerContent = {
                 ModalDrawerSheet(
-                    drawerContainerColor = Color(0xFF081026),
+                    drawerContainerColor = Color(0xFF070E24),
                     drawerContentColor = Color.White,
                     modifier = Modifier.width(310.dp)
                 ) {
@@ -132,7 +136,6 @@ class MainActivity : ComponentActivity() {
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Drawer Header & Device ID Card
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 8.dp)
@@ -154,22 +157,21 @@ class MainActivity : ComponentActivity() {
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "SMART VPN PRO",
+                                    text = "SMART VPN ULTRA",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = Color(0xFF00F0FF)
                                 )
                                 Text(
-                                    text = "SSH • SlowDNS • WS+SNI • Xray",
+                                    text = "SSH • SlowDNS • Xray • WG • HY2",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFF9FB3C8)
                                 )
                             }
                         }
 
-                        // Hardware Device ID Box (Used to Lock Configs)
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF121F45)),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF101D42)),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -213,7 +215,6 @@ class MainActivity : ComponentActivity() {
 
                         Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color(0xFF1E2D5A))
 
-                        // Menu Navigation Items
                         NavigationDrawerItem(
                             label = { Text("Ping / Host Checker") },
                             selected = selectedTab == 3 && activeToolPage == "PING",
@@ -318,9 +319,9 @@ class MainActivity : ComponentActivity() {
                     TopAppBar(
                         title = {
                             Text(
-                                text = "SMART VPN PRO",
+                                text = "SMART VPN ULTRA",
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 1.sp
+                                letterSpacing = 1.2.sp
                             )
                         },
                         navigationIcon = {
@@ -335,12 +336,12 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color(0xFF081026)
+                            containerColor = Color(0xFF070E24)
                         )
                     )
                 },
                 bottomBar = {
-                    NavigationBar(containerColor = Color(0xFF081026)) {
+                    NavigationBar(containerColor = Color(0xFF070E24)) {
                         NavigationBarItem(
                             selected = selectedTab == 0,
                             onClick = { selectedTab = 0 },
@@ -374,7 +375,7 @@ class MainActivity : ComponentActivity() {
                         activeProfile = activeProfile,
                         onToggleConnection = {
                             if (activeProfile == null) {
-                                viewModel.addLog("Cannot connect: Go to Configs tab and create or select a profile first.")
+                                viewModel.addLog("Cannot connect: Select or create a profile in Configs first.")
                                 selectedTab = 1
                             } else {
                                 toggleVpn(connectionState != "DISCONNECTED")
@@ -404,20 +405,54 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun CyberSplashScreen() {
+    private fun QuantumCyberSplashScreen() {
+        val infiniteTransition = rememberInfiniteTransition(label = "SplashRadar")
+        val radarAngle by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2400, easing = LinearEasing)
+            ),
+            label = "RadarSweep"
+        )
+        val reverseAngle by infiniteTransition.animateFloat(
+            initialValue = 360f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 3000, easing = LinearEasing)
+            ),
+            label = "ReverseRing"
+        )
+
+        var bootStep by remember { mutableIntStateOf(1) }
+        LaunchedEffect(Unit) {
+            for (step in 1..5) {
+                bootStep = step
+                delay(480L)
+            }
+        }
+
+        val bootMessages = listOf(
+            "[OK] Initializing Quantum Stealth Core v4.0...",
+            "[OK] Mounting Go Xray-Core (VLESS / VMess / Trojan)...",
+            "[OK] Activating SSH + WS + SNI + Payload Engine...",
+            "[OK] Starting Native SlowDNS (DNSTT) & Hysteria2 QUIC...",
+            "[OK] Binding WireGuard & Hardware Enclave Lock..."
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF040814),
-                            Color(0xFF0D1D47),
-                            Color(0xFF040814)
+                            Color(0xFF02050D),
+                            Color(0xFF0A1940),
+                            Color(0xFF04091A)
                         )
                     )
                 )
-                .padding(32.dp),
+                .padding(28.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -425,71 +460,164 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.Center
             ) {
                 Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFF00F0FF).copy(alpha = 0.4f),
-                                    Color.Transparent
-                                )
-                            )
-                        )
-                        .border(2.5.dp, Color(0xFF00F0FF), CircleShape),
+                    modifier = Modifier.size(164.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = Color(0xFF00F0FF),
-                        modifier = Modifier.size(64.dp)
-                    )
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        rotate(radarAngle) {
+                            drawArc(
+                                color = Color(0xFF00F0FF),
+                                startAngle = 0f,
+                                sweepAngle = 135f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                            drawArc(
+                                color = Color(0xFF00E676),
+                                startAngle = 180f,
+                                sweepAngle = 135f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        }
+                        rotate(reverseAngle) {
+                            drawArc(
+                                color = Color(0xFF7C4DFF),
+                                startAngle = 30f,
+                                sweepAngle = 100f,
+                                useCenter = false,
+                                topLeft = androidx.compose.ui.geometry.Offset(18.dp.toPx(), 18.dp.toPx()),
+                                size = androidx.compose.ui.geometry.Size(
+                                    size.width - 36.dp.toPx(),
+                                    size.height - 36.dp.toPx()
+                                ),
+                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                            drawArc(
+                                color = Color(0xFFFFAB00),
+                                startAngle = 210f,
+                                sweepAngle = 100f,
+                                useCenter = false,
+                                topLeft = androidx.compose.ui.geometry.Offset(18.dp.toPx(), 18.dp.toPx()),
+                                size = androidx.compose.ui.geometry.Size(
+                                    size.width - 36.dp.toPx(),
+                                    size.height - 36.dp.toPx()
+                                ),
+                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF00F0FF).copy(alpha = 0.45f),
+                                        Color(0xFF0A1940)
+                                    )
+                                )
+                            )
+                            .border(2.dp, Color(0xFF00F0FF), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = Color(0xFF00F0FF),
+                            modifier = Modifier.size(52.dp)
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(22.dp))
 
                 Text(
-                    text = "SMART VPN PRO",
+                    text = "SMART VPN ULTRA",
                     fontSize = 30.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White,
-                    letterSpacing = 2.sp
+                    letterSpacing = 2.5.sp
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "QUANTUM MULTI-PROTOCOL STEALTH ARCHITECTURE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF00F0FF),
+                    letterSpacing = 1.2.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    listOf("SSH+WS", "SLOWDNS", "XRAY", "WIREGUARD", "HY2").forEach { badge ->
+                        Surface(
+                            color = Color(0xFF112252),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.border(1.dp, Color(0xFF00F0FF).copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                        ) {
+                            Text(
+                                text = badge,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00E676),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF060E24)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF1E326E), RoundedCornerShape(12.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        bootMessages.take(bootStep).forEach { msg ->
+                            Text(
+                                text = msg,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = Color(0xFF00E676)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                LinearProgressIndicator(
+                    progress = bootStep / 5f,
+                    color = Color(0xFF00F0FF),
+                    trackColor = Color(0xFF13224C),
+                    modifier = Modifier
+                        .fillMaxWidth(0.78f)
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Next-Gen Multi-Protocol Stealth Tunnel",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF00F0FF),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF101F47)),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Text(
-                        text = "SSH Direct • SSH+WS+SNI+Payload • SlowDNS (DNSTT) • VLESS / Xray • HWID Config Lock",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFFD6E4FF),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                LinearProgressIndicator(
-                    color = Color(0xFF00F0FF),
-                    trackColor = Color(0xFF13224C),
-                    modifier = Modifier
-                        .width(200.dp)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
+                    text = "LOADING ENGINES • ${bootStep * 20}%",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Color(0xFF9FB3C8)
                 )
             }
         }
@@ -499,13 +627,13 @@ class MainActivity : ComponentActivity() {
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Pro")
+                putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Ultra")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Download Smart VPN Pro — Next-Gen Multi-Protocol Tunnel (SSH, SlowDNS, WS+SNI+Payload, VLESS/Xray & HWID Locked Configs)."
+                    "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, SlowDNS, VLESS/VMess/Trojan, WireGuard & Hysteria2)."
                 )
             }
-            startActivity(Intent.createChooser(sendIntent, "Share Smart VPN Pro"))
+            startActivity(Intent.createChooser(sendIntent, "Share Smart VPN Ultra"))
         } catch (t: Throwable) {
             viewModel.addLog("Share app error: ${t.message}")
         }
