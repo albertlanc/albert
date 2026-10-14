@@ -10,19 +10,23 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val SmartDarkColorScheme = darkColorScheme(
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color(0xFF002022),
-    primaryContainer = Color(0xFF004F58),
-    onPrimaryContainer = Color(0xFF97F0FF),
-    secondary = Color(0xFF00E676),
-    onSecondary = Color(0xFF00210B),
-    background = Color(0xFF0D1117),
-    onBackground = Color(0xFFE6EDF3),
-    surface = Color(0xFF161B22),
-    onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = Color(0xFF21262D),
-    onSurfaceVariant = Color(0xFFC9D1D9)
+private val CyberNeonColorScheme = darkColorScheme(
+    primary = Color(0xFF00F0FF),          // Electric Neon Cyan
+    onPrimary = Color(0xFF001F26),
+    primaryContainer = Color(0xFF0A2E46), // Deep Glowing Cyan Card
+    onPrimaryContainer = Color(0xFFA6F8FF),
+    secondary = Color(0xFF00E676),        // Cyber Emerald Connected
+    onSecondary = Color(0xFF00210E),
+    secondaryContainer = Color(0xFF1E2942),
+    onSecondaryContainer = Color(0xFFD6E4FF),
+    tertiary = Color(0xFF7C4DFF),         // Electric Violet Accent
+    background = Color(0xFF050A18),       // Deep Midnight Cyber Navy
+    onBackground = Color(0xFFF0F6FC),
+    surface = Color(0xFF0B132B),          // Rich Sapphire Surface
+    onSurface = Color(0xFFF0F6FC),
+    surfaceVariant = Color(0xFF131F42),   // Elevated Glass Card Surface
+    onSurfaceVariant = Color(0xFF9FB3C8),
+    error = Color(0xFFFF5252)
 )
 
 @Composable
@@ -33,14 +37,14 @@ fun SmartVpnTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = SmartDarkColorScheme.background.toArgb()
-            window.navigationBarColor = SmartDarkColorScheme.surface.toArgb()
+            window.statusBarColor = CyberNeonColorScheme.background.toArgb()
+            window.navigationBarColor = CyberNeonColorScheme.surface.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
     MaterialTheme(
-        colorScheme = SmartDarkColorScheme,
+        colorScheme = CyberNeonColorScheme,
         content = content
     )
 }
