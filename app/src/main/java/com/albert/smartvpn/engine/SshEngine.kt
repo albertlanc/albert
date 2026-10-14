@@ -5,8 +5,6 @@ import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
-import java.io.InputStream
-import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -18,6 +16,7 @@ object SshEngine {
     private var sshClient: SSHClient? = null
     @Volatile private var isRunning = false
     private var localServer: ServerSocket? = null
+    private val activeBridges = mutableListOf<ServerSocket>()
 
     fun startSshTunnel(
         host: String,
@@ -108,6 +107,8 @@ object SshEngine {
     }
 
     private fun handleSocks5Client(client: Socket) {
+        var bridgeServer: ServerSocket? = null
+        var bridgeSocket: Socket? = null
         try {
             val ins = client.getInputStream()
             val outs = client.getOutputStream()
@@ -119,8 +120,10 @@ object SshEngine {
                 return
             }
             val nMethods = ins.read()
-            val methods = ByteArray(nMethods)
-            ins.read(methods)
+            if (nMethods > 0) {
+                val methods = ByteArray(nMethods)
+                ins.read(methods)
+            }
             outs.write(byteArrayOf(0x05, 0x00))
             outs.flush()
 
@@ -135,18 +138,18 @@ object SshEngine {
             }
 
             val targetHost = when (atyp) {
-                1 -> { // IPv4
+                1 -> {
                     val addr = ByteArray(4)
                     ins.read(addr)
                     InetAddress.getByAddress(addr).hostAddress ?: ""
                 }
-                3 -> { // Domain
+                3 -> {
                     val len = ins.read()
                     val domain = ByteArray(len)
                     ins.read(domain)
                     String(domain)
                 }
-                4 -> { // IPv6
+                4 -> {
                     val addr = ByteArray(16)
                     ins.read(addr)
                     InetAddress.getByAddress(addr).hostAddress ?: ""
@@ -157,45 +160,58 @@ object SshEngine {
             val portLow = ins.read()
             val targetPort = (portHigh shl 8) or portLow
 
-            val channel = sshClient?.newDirectTCPIPChannel(
-                Parameters("127.0.0.1", 0, targetHost, targetPort),
-                null
-            )
-            if (channel == null) {
-                client.close()
-                return
+            // Bridge through SSHJ's standard LocalPortForwarder
+            bridgeServer = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+            val bridgePort = bridgeServer.localPort
+            synchronized(activeBridges) { activeBridges.add(bridgeServer) }
+
+            val params = Parameters("127.0.0.1", bridgePort, targetHost, targetPort)
+            thread(start = true) {
+                try {
+                    sshClient?.newLocalPortForwarder(params, bridgeServer)?.listen()
+                } catch (_: Throwable) {}
             }
+
+            bridgeSocket = Socket("127.0.0.1", bridgePort)
 
             // Reply SOCKS5 Success
             outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             outs.flush()
 
-            val sshIn = channel.inputStream
-            val sshOut = channel.outputStream
+            val sshIn = bridgeSocket.getInputStream()
+            val sshOut = bridgeSocket.getOutputStream()
 
             val t1 = thread(start = true) {
                 try {
                     ins.copyTo(sshOut)
                 } catch (_: Throwable) {
                 } finally {
-                    try { channel.close() } catch (_: Throwable) {}
+                    try { bridgeSocket.close() } catch (_: Throwable) {}
                 }
             }
             try {
                 sshIn.copyTo(outs)
-            } catch (_: Throwable) {
-            } finally {
-                try { client.close() } catch (_: Throwable) {}
-                try { channel.close() } catch (_: Throwable) {}
-            }
+            } catch (_: Throwable) {}
             t1.join(200)
         } catch (_: Throwable) {
+        } finally {
             try { client.close() } catch (_: Throwable) {}
+            try { bridgeSocket?.close() } catch (_: Throwable) {}
+            try {
+                bridgeServer?.close()
+                synchronized(activeBridges) { activeBridges.remove(bridgeServer) }
+            } catch (_: Throwable) {}
         }
     }
 
     fun stopSshTunnel() {
         isRunning = false
+        synchronized(activeBridges) {
+            activeBridges.forEach {
+                try { it.close() } catch (_: Throwable) {}
+            }
+            activeBridges.clear()
+        }
         try { localServer?.close() } catch (_: Throwable) {}
         localServer = null
         try {
