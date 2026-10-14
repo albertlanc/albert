@@ -12,8 +12,10 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.albert.smartvpn.MainActivity
+import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
+import com.albert.smartvpn.engine.SlowDnsEngine
 import com.albert.smartvpn.engine.SshEngine
 import com.albert.smartvpn.engine.Tun2Socks
 import com.albert.smartvpn.engine.XrayCore
@@ -31,8 +33,8 @@ class SmartVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.albert.smartvpn.START"
         const val ACTION_STOP = "com.albert.smartvpn.STOP"
-        private const val CHANNEL_ID = "smart_vpn_channel"
-        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = "smart_vpn_live_channel"
+        private const val NOTIFICATION_ID = 101
         private const val TAG = "SmartVpnService"
     }
 
@@ -59,9 +61,8 @@ class SmartVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-    private fun startVpnPipeline() {
-        VpnStateBridge.updateState("CONNECTING", "Initializing...")
-        val notification = buildNotification("Connecting Smart VPN...")
+    private fun promoteForeground(title: String, text: String) {
+        val notification = buildNotification(title, text)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -77,6 +78,11 @@ class SmartVpnService : VpnService() {
                 startForeground(NOTIFICATION_ID, notification)
             } catch (_: Throwable) {}
         }
+    }
+
+    private fun startVpnPipeline() {
+        VpnStateBridge.updateState("CONNECTING", "Initializing...")
+        promoteForeground("Smart VPN Pro — Connecting", "Negotiating encrypted tunnel...")
 
         serviceScope.launch {
             try {
@@ -91,45 +97,89 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
+                // Verify Device ID Lock before starting tunnel
+                val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
+                if (profile.lockedDeviceId.isNotBlank() &&
+                    !profile.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
+                ) {
+                    VpnStateBridge.addLog("HWID Lock Rejected! Config is locked to ${profile.lockedDeviceId} (Your ID: $myDeviceId)")
+                    VpnStateBridge.updateState("DISCONNECTED", "HWID Locked")
+                    stopVpnPipeline(resetStatus = false)
+                    return@launch
+                }
+
                 VpnStateBridge.addLog("Starting profile: ${profile.name} (${profile.protocol})")
-                val localSocksPort = 10808
+                val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
                 val proto = profile.protocol.uppercase()
 
-                val engineStarted = if (proto.contains("SSH") || proto == "SLOWDNS") {
-                    val targetHost = if (proto == "SLOWDNS" && profile.slowDnsServerIp.isNotBlank()) {
-                        profile.slowDnsServerIp
-                    } else {
-                        profile.server
+                val engineStarted = when {
+                    proto == "SLOWDNS" -> {
+                        val slowDnsPort = 7000
+                        val dnsStarted = SlowDnsEngine.startSlowDns(
+                            context = applicationContext,
+                            dnsServerIp = profile.slowDnsServerIp.ifBlank { "8.8.8.8" },
+                            dnsPort = if (profile.port in 1..65535 && profile.port != 22) profile.port else 53,
+                            nsDomain = profile.slowDnsDomain,
+                            pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
+                            localPort = slowDnsPort
+                        )
+                        if (!dnsStarted) {
+                            false
+                        } else {
+                            SshEngine.startSshTunnel(
+                                host = "127.0.0.1",
+                                port = slowDnsPort,
+                                user = profile.sshUser.ifBlank { profile.uuid },
+                                pass = profile.sshPass,
+                                localPort = localSocksPort,
+                                isSlowDns = true
+                            )
+                        }
                     }
-                    SshEngine.startSshTunnel(
-                        host = targetHost,
-                        port = profile.port,
-                        user = profile.sshUser.ifBlank { profile.uuid },
-                        pass = profile.sshPass,
-                        localPort = localSocksPort,
-                        payloadTemplate = profile.payload,
-                        sni = profile.sni,
-                        proxyHost = profile.proxyHost,
-                        proxyPort = profile.proxyPort
-                    )
-                } else {
-                    val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
-                    XrayCore.RunXrayFromJSON(configJson)
+
+                    proto.contains("SSH") -> {
+                        SshEngine.startSshTunnel(
+                            host = profile.server,
+                            port = profile.port,
+                            user = profile.sshUser.ifBlank { profile.uuid },
+                            pass = profile.sshPass,
+                            localPort = localSocksPort,
+                            payloadTemplate = profile.payload,
+                            sni = profile.sni,
+                            proxyHost = profile.proxyHost,
+                            proxyPort = profile.proxyPort,
+                            isSlowDns = false
+                        )
+                    }
+
+                    else -> {
+                        if (profile.uuid.isBlank()) {
+                            VpnStateBridge.addLog("Error: UUID / Password is empty for ${profile.protocol}!")
+                            false
+                        } else {
+                            val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
+                            XrayCore.RunXrayFromJSON(configJson)
+                        }
+                    }
                 }
 
                 if (!engineStarted) {
-                    VpnStateBridge.addLog("Connection failed: Check username, password, or server host.")
+                    VpnStateBridge.addLog("Connection failed: Check credentials, SNI/Payload, or server host.")
                     VpnStateBridge.updateState("DISCONNECTED", "Auth / Conn Failed")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
                 VpnStateBridge.updateState("CONNECTING", "Opening TUN...")
+                val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
+                val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
+
                 val builder = Builder()
-                    .setSession(profile.name)
+                    .setSession("Smart VPN - ${profile.name}")
                     .setMtu(1500)
                     .addAddress("10.0.0.2", 24)
-                    .addDnsServer(profile.customDns.ifBlank { "1.1.1.1" })
+                    .addDnsServer(primaryDns)
+                    .addDnsServer(secondaryDns)
                     .addRoute("0.0.0.0", 0)
 
                 try {
@@ -148,10 +198,12 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
 
                 VpnStateBridge.updateState("CONNECTED", "Protected")
-                VpnStateBridge.addLog("CONNECTED! Traffic is now routed through ${profile.name}.")
+                VpnStateBridge.addLog("VPN CONNECTED! Routing traffic via ${profile.name} (${profile.protocol}).")
 
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.notify(NOTIFICATION_ID, buildNotification("Connected to ${profile.name}"))
+                promoteForeground(
+                    "Smart VPN Pro • Connected",
+                    "${profile.name} (${profile.protocol}) • Active Tunnel"
+                )
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.addLog("Pipeline Error: ${t.message}")
@@ -165,6 +217,29 @@ class SmartVpnService : VpnService() {
         val protocolLower = profile.protocol.lowercase()
         val sniHost = profile.sni.ifBlank { profile.server }
         val wsPath = profile.path.ifBlank { "/" }
+        val securityMode = if (profile.port == 80 && profile.security != "tls") "none" else "tls"
+
+        val outboundSettings = if (protocolLower == "trojan") {
+            """
+            "servers": [{
+              "address": "${profile.server}",
+              "port": ${profile.port},
+              "password": "${profile.uuid}"
+            }]
+            """.trimIndent()
+        } else {
+            """
+            "vnext": [{
+              "address": "${profile.server}",
+              "port": ${profile.port},
+              "users": [{
+                "id": "${profile.uuid}",
+                "encryption": "none"
+              }]
+            }]
+            """.trimIndent()
+        }
+
         return """
         {
           "log": { "loglevel": "warning" },
@@ -179,18 +254,11 @@ class SmartVpnService : VpnService() {
             "tag": "proxy",
             "protocol": "$protocolLower",
             "settings": {
-              "vnext": [{
-                "address": "${profile.server}",
-                "port": ${profile.port},
-                "users": [{
-                  "id": "${profile.uuid}",
-                  "encryption": "none"
-                }]
-              }]
+              $outboundSettings
             },
             "streamSettings": {
               "network": "${profile.network.ifBlank { "ws" }}",
-              "security": "${profile.security.ifBlank { "tls" }}",
+              "security": "$securityMode",
               "tlsSettings": {
                 "serverName": "$sniHost",
                 "allowInsecure": true
@@ -211,6 +279,7 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.stopTunnel()
                 XrayCore.StopXray()
                 SshEngine.stopSshTunnel()
+                SlowDnsEngine.stopSlowDns()
                 vpnInterface?.close()
                 vpnInterface = null
                 if (resetStatus) {
@@ -237,27 +306,43 @@ class SmartVpnService : VpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Smart VPN Status",
-                NotificationManager.IMPORTANCE_LOW
-            )
+                "Smart VPN Connection Status",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Shows active Smart VPN key notification and connection status"
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(true)
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(contentText: String): Notification {
-        val pendingIntent = PendingIntent.getActivity(
+    private fun buildNotification(title: String, contentText: String): Notification {
+        val openAppIntent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, SmartVpnService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Smart VPN")
+            .setContentTitle(title)
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentIntent(pendingIntent)
+            .setSmallIcon(R.drawable.ic_vpn_key)
+            .setContentIntent(openAppIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 }
