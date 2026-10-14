@@ -15,6 +15,7 @@ import com.albert.smartvpn.MainActivity
 import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
+import com.albert.smartvpn.engine.Hysteria2Engine
 import com.albert.smartvpn.engine.SlowDnsEngine
 import com.albert.smartvpn.engine.SshEngine
 import com.albert.smartvpn.engine.Tun2Socks
@@ -82,7 +83,7 @@ class SmartVpnService : VpnService() {
 
     private fun startVpnPipeline() {
         VpnStateBridge.updateState("CONNECTING", "Initializing...")
-        promoteForeground("Smart VPN Pro — Connecting", "Negotiating encrypted tunnel...")
+        promoteForeground("Smart VPN Ultra — Connecting", "Negotiating multi-protocol tunnel...")
 
         serviceScope.launch {
             try {
@@ -97,12 +98,11 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                // Verify Device ID Lock before starting tunnel
                 val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
                 if (profile.lockedDeviceId.isNotBlank() &&
                     !profile.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                 ) {
-                    VpnStateBridge.addLog("HWID Lock Rejected! Config is locked to ${profile.lockedDeviceId} (Your ID: $myDeviceId)")
+                    VpnStateBridge.addLog("HWID Lock Rejected! Locked to ${profile.lockedDeviceId} (Yours: $myDeviceId)")
                     VpnStateBridge.updateState("DISCONNECTED", "HWID Locked")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -118,7 +118,7 @@ class SmartVpnService : VpnService() {
                         val dnsStarted = SlowDnsEngine.startSlowDns(
                             context = applicationContext,
                             dnsServerIp = profile.slowDnsServerIp.ifBlank { "8.8.8.8" },
-                            dnsPort = if (profile.port in 1..65535 && profile.port != 22) profile.port else 53,
+                            dnsPort = 53,
                             nsDomain = profile.slowDnsDomain,
                             pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
                             localPort = slowDnsPort
@@ -127,6 +127,7 @@ class SmartVpnService : VpnService() {
                             false
                         } else {
                             SshEngine.startSshTunnel(
+                                protocolMode = "SLOWDNS",
                                 host = "127.0.0.1",
                                 port = slowDnsPort,
                                 user = profile.sshUser.ifBlank { profile.uuid },
@@ -139,6 +140,7 @@ class SmartVpnService : VpnService() {
 
                     proto.contains("SSH") -> {
                         SshEngine.startSshTunnel(
+                            protocolMode = proto,
                             host = profile.server,
                             port = profile.port,
                             user = profile.sshUser.ifBlank { profile.uuid },
@@ -152,9 +154,30 @@ class SmartVpnService : VpnService() {
                         )
                     }
 
+                    proto == "HYSTERIA2" -> {
+                        Hysteria2Engine.startHysteria2(
+                            context = applicationContext,
+                            profile = profile,
+                            localSocksPort = localSocksPort
+                        )
+                    }
+
+                    proto == "WIREGUARD" -> {
+                        if (profile.wgPrivateKey.isBlank() || profile.wgPublicKey.isBlank()) {
+                            VpnStateBridge.addLog("WireGuard Error: Private Key or Peer Public Key is empty!")
+                            false
+                        } else {
+                            val wgJson = buildWireGuardXrayJson(profile, localSocksPort)
+                            XrayCore.RunXrayFromJSON(wgJson)
+                        }
+                    }
+
                     else -> {
+                        // VLESS, VMESS, TROJAN
                         if (profile.uuid.isBlank()) {
                             VpnStateBridge.addLog("Error: UUID / Password is empty for ${profile.protocol}!")
+                            false
+                        } else if (!XrayCore.verifyServerReachable(profile.server, profile.port)) {
                             false
                         } else {
                             val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
@@ -164,7 +187,7 @@ class SmartVpnService : VpnService() {
                 }
 
                 if (!engineStarted) {
-                    VpnStateBridge.addLog("Connection failed: Check credentials, SNI/Payload, or server host.")
+                    VpnStateBridge.addLog("Connection failed: Verify credentials, SNI/Payload, or endpoint.")
                     VpnStateBridge.updateState("DISCONNECTED", "Auth / Conn Failed")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -175,8 +198,8 @@ class SmartVpnService : VpnService() {
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart VPN - ${profile.name}")
-                    .setMtu(1500)
+                    .setSession("Smart VPN Ultra - ${profile.name}")
+                    .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
                     .addDnsServer(secondaryDns)
@@ -198,10 +221,10 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
 
                 VpnStateBridge.updateState("CONNECTED", "Protected")
-                VpnStateBridge.addLog("VPN CONNECTED! Routing traffic via ${profile.name} (${profile.protocol}).")
+                VpnStateBridge.addLog("VPN CONNECTED! Traffic routed via ${profile.name} (${profile.protocol}).")
 
                 promoteForeground(
-                    "Smart VPN Pro • Connected",
+                    "Smart VPN Ultra • Connected",
                     "${profile.name} (${profile.protocol}) • Active Tunnel"
                 )
             } catch (t: Throwable) {
@@ -215,28 +238,102 @@ class SmartVpnService : VpnService() {
 
     private fun buildXrayJson(profile: VpnProfile, socksPort: Int): String {
         val protocolLower = profile.protocol.lowercase()
-        val sniHost = profile.sni.ifBlank { profile.server }
-        val wsPath = profile.path.ifBlank { "/" }
-        val securityMode = if (profile.port == 80 && profile.security != "tls") "none" else "tls"
+        val serverHost = profile.server.trim()
+        val sniHost = profile.sni.trim().ifBlank { serverHost }
+        val wsPath = profile.path.trim().ifBlank { "/" }
+        val networkType = profile.network.trim().lowercase().ifBlank { "ws" }
 
-        val outboundSettings = if (protocolLower == "trojan") {
-            """
-            "servers": [{
-              "address": "${profile.server}",
-              "port": ${profile.port},
-              "password": "${profile.uuid}"
-            }]
-            """.trimIndent()
+        val isReality = profile.security.equals("reality", ignoreCase = true) || profile.pbk.isNotBlank()
+        val isTls = when {
+            isReality -> false
+            profile.port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095) &&
+                !profile.security.equals("tls", ignoreCase = true) -> false
+            profile.security.equals("none", ignoreCase = true) -> false
+            else -> true
+        }
+        val securityMode = when {
+            isReality -> "reality"
+            isTls -> "tls"
+            else -> "none"
+        }
+
+        val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") {
+            """, "flow": "${profile.flow.trim()}" """
         } else {
-            """
-            "vnext": [{
-              "address": "${profile.server}",
-              "port": ${profile.port},
-              "users": [{
-                "id": "${profile.uuid}",
-                "encryption": "none"
-              }]
-            }]
+            ""
+        }
+
+        val outboundSettings = when (protocolLower) {
+            "trojan" -> """
+                "servers": [{
+                  "address": "$serverHost",
+                  "port": ${profile.port},
+                  "password": "${profile.uuid.trim()}"
+                }]
+            """.trimIndent()
+            "vmess" -> """
+                "vnext": [{
+                  "address": "$serverHost",
+                  "port": ${profile.port},
+                  "users": [{
+                    "id": "${profile.uuid.trim()}",
+                    "alterId": 0,
+                    "security": "auto"
+                  }]
+                }]
+            """.trimIndent()
+            else -> """
+                "vnext": [{
+                  "address": "$serverHost",
+                  "port": ${profile.port},
+                  "users": [{
+                    "id": "${profile.uuid.trim()}",
+                    "encryption": "none"$flowField
+                  }]
+                }]
+            """.trimIndent()
+        }
+
+        // Uses Xray-core's new verifyPeerCertByName (vcn) instead of the removed allowInsecure field
+        val verifyNames = if (!sniHost.equals(serverHost, ignoreCase = true)) {
+            "$sniHost,$serverHost"
+        } else {
+            sniHost
+        }
+
+        val securityBlock = when {
+            isReality -> """
+                "realitySettings": {
+                  "serverName": "$sniHost",
+                  "fingerprint": "chrome",
+                  "publicKey": "${profile.pbk.trim()}",
+                  "shortId": "${profile.sid.trim()}"
+                },
+            """.trimIndent()
+            isTls -> """
+                "tlsSettings": {
+                  "serverName": "$sniHost",
+                  "verifyPeerCertByName": "$verifyNames",
+                  "alpn": ["http/1.1"]
+                },
+            """.trimIndent()
+            else -> ""
+        }
+
+        val transportBlock = when (networkType) {
+            "grpc" -> """
+                "grpcSettings": {
+                  "serviceName": "${wsPath.removePrefix("/")}"
+                }
+            """.trimIndent()
+            "tcp" -> """
+                "tcpSettings": {}
+            """.trimIndent()
+            else -> """
+                "wsSettings": {
+                  "path": "$wsPath",
+                  "host": "$sniHost"
+                }
             """.trimIndent()
         }
 
@@ -257,16 +354,44 @@ class SmartVpnService : VpnService() {
               $outboundSettings
             },
             "streamSettings": {
-              "network": "${profile.network.ifBlank { "ws" }}",
+              "network": "$networkType",
               "security": "$securityMode",
-              "tlsSettings": {
-                "serverName": "$sniHost",
-                "allowInsecure": true
-              },
-              "wsSettings": {
-                "path": "$wsPath",
-                "headers": { "Host": "$sniHost" }
-              }
+              $securityBlock
+              $transportBlock
+            }
+          }]
+        }
+        """.trimIndent()
+    }
+
+    private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
+        val cleanAddr = profile.wgAddress.trim().ifBlank { "10.0.0.2/32" }
+        val pskField = if (profile.wgPresharedKey.isNotBlank()) {
+            """, "preSharedKey": "${profile.wgPresharedKey.trim()}" """
+        } else {
+            ""
+        }
+        return """
+        {
+          "log": { "loglevel": "warning" },
+          "inbounds": [{
+            "tag": "socks-in",
+            "port": $socksPort,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": { "auth": "noauth", "udp": true }
+          }],
+          "outbounds": [{
+            "tag": "proxy",
+            "protocol": "wireguard",
+            "settings": {
+              "secretKey": "${profile.wgPrivateKey.trim()}",
+              "address": ["$cleanAddr"],
+              "peers": [{
+                "publicKey": "${profile.wgPublicKey.trim()}",
+                "endpoint": "${profile.server.trim()}:${profile.port}"$pskField
+              }],
+              "mtu": ${profile.wgMtu.coerceIn(1280, 1500)}
             }
           }]
         }
@@ -280,6 +405,7 @@ class SmartVpnService : VpnService() {
                 XrayCore.StopXray()
                 SshEngine.stopSshTunnel()
                 SlowDnsEngine.stopSlowDns()
+                Hysteria2Engine.stopHysteria2()
                 vpnInterface?.close()
                 vpnInterface = null
                 if (resetStatus) {
