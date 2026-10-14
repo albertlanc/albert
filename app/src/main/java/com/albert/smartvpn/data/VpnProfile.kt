@@ -34,8 +34,9 @@ data class VpnProfile(
     val enableCompression: Boolean = true,
     val autoReconnect: Boolean = true,
     val enableWakeLock: Boolean = true,
-    // Config Lock & Share Protection
+    // Config Lock, Device HWID Lock & Share Protection
     val isLocked: Boolean = false,
     val lockPassphrase: String = "",
+    val lockedDeviceId: String = "",
     val configNote: String = ""
 )
