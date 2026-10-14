@@ -38,9 +38,12 @@ object VpnStateBridge {
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
     private val _logs = MutableStateFlow<List<String>>(
-        listOf("[v3.0] Smart VPN Pro Engine Initialized.")
+        listOf("[v4.5] Smart VPN Ultra Engine Initialized.")
     )
     val logs: StateFlow<List<String>> = _logs
+
+    // Theme Mode: "AUTO" (Morning Light / Night Dark), "CYBER_DARK", "SOLAR_LIGHT", "ROYAL_GOLD"
+    val themeMode = MutableStateFlow("AUTO")
 
     // Global Advanced SSH & Tunnel Settings
     val sshCompression = MutableStateFlow(true)
