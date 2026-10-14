@@ -88,9 +88,9 @@ fun HomeScreen(
 
     val accentColor by animateColorAsState(
         targetValue = when (connectionState) {
-            "CONNECTED" -> Color(0xFF00E676)
-            "CONNECTING" -> Color(0xFFFFAB00)
-            else -> Color(0xFF00F0FF)
+            "CONNECTED" -> MaterialTheme.colorScheme.secondary
+            "CONNECTING" -> Color(0xFFFF9800)
+            else -> MaterialTheme.colorScheme.primary
         },
         label = "AccentColor"
     )
@@ -116,26 +116,19 @@ fun HomeScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF040711),
-                        Color(0xFF0A1435),
-                        Color(0xFF040711)
-                    )
-                )
-            )
+            .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 1. TOP CONNECT / DISCONNECT CHECKBOX COMMAND DECK
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .border(1.5.dp, accentColor.copy(alpha = 0.8f), RoundedCornerShape(18.dp))
                 .clickable { onToggleConnection() },
             shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D193B))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Row(
                 modifier = Modifier
@@ -153,8 +146,8 @@ fun HomeScreen(
                         onCheckedChange = { onToggleConnection() },
                         colors = CheckboxDefaults.colors(
                             checkedColor = accentColor,
-                            uncheckedColor = Color(0xFF00F0FF),
-                            checkmarkColor = Color(0xFF040711)
+                            uncheckedColor = MaterialTheme.colorScheme.primary,
+                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
                         )
                     )
                     Spacer(modifier = Modifier.width(12.dp))
@@ -202,12 +195,13 @@ fun HomeScreen(
             }
         }
 
+        // 2. QUANTUM ORBITAL REACTOR CORE & LIVE TELEMETRY
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, Color(0xFF1E2F66), RoundedCornerShape(22.dp)),
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), RoundedCornerShape(22.dp)),
             shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF09122C))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(
                 modifier = Modifier
@@ -215,6 +209,9 @@ fun HomeScreen(
                     .padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val tertiaryColor = MaterialTheme.colorScheme.tertiary
+                val primaryColor = MaterialTheme.colorScheme.primary
+
                 Box(
                     modifier = Modifier
                         .size(148.dp)
@@ -240,7 +237,7 @@ fun HomeScreen(
                         }
                         rotate(innerAngle) {
                             drawArc(
-                                color = Color(0xFF7C4DFF),
+                                color = tertiaryColor,
                                 startAngle = 45f,
                                 sweepAngle = 90f,
                                 useCenter = false,
@@ -252,7 +249,7 @@ fun HomeScreen(
                                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
                             )
                             drawArc(
-                                color = Color(0xFF00F0FF),
+                                color = primaryColor,
                                 startAngle = 225f,
                                 sweepAngle = 90f,
                                 useCenter = false,
@@ -296,7 +293,7 @@ fun HomeScreen(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 30.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
+                    color = MaterialTheme.colorScheme.onSurface
                 )
 
                 Text(
@@ -312,7 +309,7 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF0F1D45))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .padding(vertical = 10.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -320,38 +317,49 @@ fun HomeScreen(
                         Icon(
                             imageVector = Icons.Default.ArrowDownward,
                             contentDescription = null,
-                            tint = Color(0xFF00E676),
+                            tint = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
-                            Text("DOWNLOAD", style = MaterialTheme.typography.labelSmall, color = Color(0xFF9FB3C8))
-                            Text(rxSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("DOWNLOAD", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                rxSpeedText,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                     Divider(
                         modifier = Modifier
                             .height(32.dp)
                             .width(1.dp),
-                        color = Color(0xFF1E2F66)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.ArrowUpward,
                             contentDescription = null,
-                            tint = Color(0xFF00F0FF),
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
-                            Text("UPLOAD", style = MaterialTheme.typography.labelSmall, color = Color(0xFF9FB3C8))
-                            Text(txSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("UPLOAD", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                txSpeedText,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
             }
         }
 
+        // 3. TELEMETRY & ENGINE STATS GRID
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -360,14 +368,14 @@ fun HomeScreen(
                 title = "PROTOCOL ENGINE",
                 value = activeProfile?.protocol ?: "READY",
                 icon = Icons.Default.Bolt,
-                accent = Color(0xFF00F0FF),
+                accent = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f)
             )
             TelemetryStatCard(
                 title = "SECURITY LAYER",
                 value = activeProfile?.security?.uppercase() ?: "TLS / SSH",
                 icon = Icons.Default.Security,
-                accent = Color(0xFF7C4DFF),
+                accent = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -380,22 +388,23 @@ fun HomeScreen(
                 title = "LOCAL SOCKS5",
                 value = "127.0.0.1:$localSocksPort",
                 icon = Icons.Default.Lan,
-                accent = Color(0xFF00E676),
+                accent = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier.weight(1f)
             )
             TelemetryStatCard(
                 title = "PRIMARY DNS",
                 value = customDns1,
                 icon = Icons.Default.Dns,
-                accent = Color(0xFFFFAB00),
+                accent = Color(0xFFFF9800),
                 modifier = Modifier.weight(1f)
             )
         }
 
+        // 4. DEVICE HARDWARE ID BADGE
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D1736))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Row(
                 modifier = Modifier
@@ -408,7 +417,7 @@ fun HomeScreen(
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
                         contentDescription = null,
-                        tint = Color(0xFF00F0FF),
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -423,14 +432,14 @@ fun HomeScreen(
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
                 Text(
                     text = "ENCLAVE LOCKED",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF00E676),
+                    color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -457,7 +466,7 @@ private fun TelemetryStatCard(
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1B3D))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -479,7 +488,7 @@ private fun TelemetryStatCard(
                 text = value,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }
