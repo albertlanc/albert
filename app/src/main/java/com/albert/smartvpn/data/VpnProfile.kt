@@ -11,16 +11,16 @@ data class VpnProfile(
     val server: String,
     val port: Int,
     val uuid: String = "",
-    val network: String = "tcp",
-    val security: String = "none",
+    val network: String = "ws",
+    val security: String = "tls",
     val sni: String = "",
     val pbk: String = "",
     val sid: String = "",
-    val path: String = "",
+    val path: String = "/",
     val flow: String = "",
     val rawJson: String = "",
     val isSelected: Boolean = false,
-    // Advanced Tunnel Fields
+    // SSH, Proxy, Payload & SlowDNS Fields
     val sshUser: String = "",
     val sshPass: String = "",
     val payload: String = "",
@@ -34,7 +34,19 @@ data class VpnProfile(
     val enableCompression: Boolean = true,
     val autoReconnect: Boolean = true,
     val enableWakeLock: Boolean = true,
-    // Config Lock, Device HWID Lock & Share Protection
+    // WireGuard Fields
+    val wgPrivateKey: String = "",
+    val wgPublicKey: String = "",
+    val wgPresharedKey: String = "",
+    val wgAddress: String = "10.0.0.2/32",
+    val wgMtu: Int = 1420,
+    // Hysteria2 Fields
+    val hy2Password: String = "",
+    val hy2Obfs: String = "",
+    val hy2ObfsPassword: String = "",
+    val hy2UpMbps: Int = 50,
+    val hy2DownMbps: Int = 100,
+    // Config Lock & HWID Security
     val isLocked: Boolean = false,
     val lockPassphrase: String = "",
     val lockedDeviceId: String = "",
