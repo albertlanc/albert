@@ -3,16 +3,20 @@ package com.albert.smartvpn.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.albert.smartvpn.data.VpnProfile
+import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 
 @Composable
 fun HomeScreen(
@@ -21,9 +25,16 @@ fun HomeScreen(
     onToggleConnection: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val connectionState by VpnStateBridge.connectionState.collectAsState()
+    val statusMessage by VpnStateBridge.statusMessage.collectAsState()
+
     val buttonColor by animateColorAsState(
-        targetValue = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-        label = "btnColor"
+        targetValue = when (connectionState) {
+            "CONNECTED" -> MaterialTheme.colorScheme.primary
+            "CONNECTING" -> Color(0xFFFFAB00) // Amber while connecting
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        },
+        label = "ButtonColor"
     )
 
     Column(
@@ -36,22 +47,31 @@ fun HomeScreen(
         // Active Profile Card
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Shield, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(
+                    imageVector = Icons.Default.Shield,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column {
                     Text(
                         text = activeProfile?.name ?: "No Profile Selected",
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (activeProfile != null) "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}" else "Select or import a server configuration",
+                        text = if (activeProfile != null) {
+                            "${activeProfile.protocol} • ${activeProfile.server}:${activeProfile.port}"
+                        } else {
+                            "Select or import a server configuration"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -59,40 +79,66 @@ fun HomeScreen(
             }
         }
 
-        // Connection Button
+        // Center Power Button
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            FilledIconButton(
+            Button(
                 onClick = onToggleConnection,
-                modifier = Modifier.size(140.dp),
                 shape = CircleShape,
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = buttonColor)
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
+                modifier = Modifier.size(160.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = "Toggle VPN",
-                    modifier = Modifier.size(64.dp),
-                    tint = if (isConnected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (connectionState == "CONNECTING") {
+                    CircularProgressIndicator(
+                        color = Color.Black,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(56.dp)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PowerSettingsNew,
+                        contentDescription = "Connect",
+                        modifier = Modifier.size(64.dp),
+                        tint = if (isConnected) Color.Black else MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = if (isConnected) "CONNECTED" else "DISCONNECTED",
-                style = MaterialTheme.typography.titleLarge
+                text = when (connectionState) {
+                    "CONNECTED" -> "CONNECTED"
+                    "CONNECTING" -> "CONNECTING..."
+                    else -> "DISCONNECTED"
+                },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = when (connectionState) {
+                    "CONNECTED" -> MaterialTheme.colorScheme.primary
+                    "CONNECTING" -> Color(0xFFFFAB00)
+                    else -> MaterialTheme.colorScheme.onBackground
+                }
             )
         }
 
-        // Stats Placeholder
+        // Footer Stats
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "Status", style = MaterialTheme.typography.bodySmall)
-                Text(text = if (isConnected) "Protected" else "Idle", style = MaterialTheme.typography.bodyLarge)
+                Text("Status", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = statusMessage,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "Security", style = MaterialTheme.typography.bodySmall)
-                Text(text = activeProfile?.security?.uppercase() ?: "NONE", style = MaterialTheme.typography.bodyLarge)
+                Text("Security", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = activeProfile?.security?.uppercase() ?: "NONE",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
