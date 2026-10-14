@@ -2,13 +2,24 @@ package com.albert.smartvpn.engine
 
 import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
+import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.SecurityUtils
 import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.security.KeyPairGenerator
+import java.security.Provider
+import java.security.Security
+import javax.net.SocketFactory
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 import kotlin.concurrent.thread
 
 object SshEngine {
@@ -17,6 +28,40 @@ object SshEngine {
     @Volatile private var isRunning = false
     private var localServer: ServerSocket? = null
     private val activeBridges = mutableListOf<ServerSocket>()
+
+    private fun setupBouncyCastleProvider() {
+        try {
+            Security.removeProvider("BC")
+            val bcClass = Class.forName("org.bouncycastle.jce.provider.BouncyCastleProvider")
+            val provider = bcClass.getDeclaredConstructor().newInstance() as Provider
+            Security.insertProviderAt(provider, 1)
+            SecurityUtils.setRegisterBouncyCastle(false)
+        } catch (t: Throwable) {
+            Log.w(TAG, "BC provider replacement note: ${t.message}")
+        }
+    }
+
+    private fun buildAndroidSafeSshConfig(): DefaultConfig {
+        setupBouncyCastleProvider()
+        val config = DefaultConfig()
+        val x25519Works = try {
+            KeyPairGenerator.getInstance("X25519", "BC")
+            true
+        } catch (_: Throwable) {
+            false
+        }
+        if (!x25519Works) {
+            config.keyExchangeFactories = config.keyExchangeFactories.filterNot {
+                it.name.contains("25519", ignoreCase = true) ||
+                    it.name.contains("448", ignoreCase = true)
+            }
+            config.keyAlgorithms = config.keyAlgorithms.filterNot {
+                it.name.contains("25519", ignoreCase = true) ||
+                    it.name.contains("448", ignoreCase = true)
+            }
+        }
+        return config
+    }
 
     fun startSshTunnel(
         host: String,
@@ -47,10 +92,23 @@ object SshEngine {
             VpnStateBridge.updateState("CONNECTING", "Connecting to $cleanHost:$port...")
             VpnStateBridge.addLog("Connecting to SSH server $cleanHost:$port...")
 
-            sshClient = SSHClient().apply {
+            val sshConfig = buildAndroidSafeSshConfig()
+            sshClient = SSHClient(sshConfig).apply {
                 addHostKeyVerifier(PromiscuousVerifier())
-                connectTimeout = 10000
+                connectTimeout = 12000
                 timeout = 15000
+
+                // Attach custom SocketFactory when using SSL/SNI or Proxy + Payload
+                if (sni.isNotBlank() || proxyHost.isNotBlank() || payloadTemplate.isNotBlank()) {
+                    socketFactory = createCustomTunnelSocketFactory(
+                        targetHost = cleanHost,
+                        targetPort = port,
+                        payloadTemplate = payloadTemplate,
+                        sni = sni.trim(),
+                        proxyHost = proxyHost.trim(),
+                        proxyPort = proxyPort
+                    )
+                }
             }
 
             sshClient?.connect(cleanHost, port)
@@ -86,6 +144,73 @@ object SshEngine {
         }
     }
 
+    private fun createCustomTunnelSocketFactory(
+        targetHost: String,
+        targetPort: Int,
+        payloadTemplate: String,
+        sni: String,
+        proxyHost: String,
+        proxyPort: Int
+    ): SocketFactory {
+        return object : SocketFactory() {
+            override fun createSocket(): Socket = openTunneledSocket()
+            override fun createSocket(host: String?, port: Int): Socket = openTunneledSocket()
+            override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket = openTunneledSocket()
+            override fun createSocket(host: InetAddress?, port: Int): Socket = openTunneledSocket()
+            override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket = openTunneledSocket()
+
+            private fun openTunneledSocket(): Socket {
+                val connectHost = if (proxyHost.isNotEmpty()) proxyHost else targetHost
+                val connectPort = if (proxyHost.isNotEmpty()) proxyPort else targetPort
+
+                val baseSocket = Socket()
+                baseSocket.connect(InetSocketAddress(connectHost, connectPort), 12000)
+
+                val activeSocket: Socket = if (sni.isNotEmpty()) {
+                    VpnStateBridge.addLog("SSL/TLS Handshake with SNI: $sni")
+                    val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                    val sslSock = sslFactory.createSocket(baseSocket, sni, connectPort, true) as SSLSocket
+                    val params = sslSock.sslParameters
+                    params.serverNames = listOf(SNIHostName(sni))
+                    sslSock.sslParameters = params
+                    sslSock.startHandshake()
+                    VpnStateBridge.addLog("SSL Handshake established (${sslSock.session.protocol}).")
+                    sslSock
+                } else {
+                    baseSocket
+                }
+
+                if (payloadTemplate.isNotBlank()) {
+                    val formatted = PayloadGenerator.generatePayload(
+                        payloadTemplate,
+                        targetHost,
+                        targetPort,
+                        sni.ifEmpty { targetHost }
+                    )
+                    VpnStateBridge.addLog("Sending HTTP Payload (${formatted.length} bytes)...")
+                    val out: OutputStream = activeSocket.getOutputStream()
+                    out.write(formatted.toByteArray())
+                    out.flush()
+
+                    val ins: InputStream = activeSocket.getInputStream()
+                    val headerBuf = StringBuilder()
+                    val b = ByteArray(1)
+                    while (headerBuf.length < 2048 && ins.read(b) != -1) {
+                        headerBuf.append(b[0].toInt().toChar())
+                        if (headerBuf.endsWith("\r\n\r\n") || headerBuf.contains("SSH-2.0-")) {
+                            break
+                        }
+                    }
+                    val statusLine = headerBuf.lineSequence().firstOrNull()?.trim() ?: ""
+                    if (statusLine.isNotEmpty()) {
+                        VpnStateBridge.addLog("Server Response: $statusLine")
+                    }
+                }
+                return activeSocket
+            }
+        }
+    }
+
     private fun startLocalSocks5Server(localPort: Int) {
         thread(start = true, name = "SSH-SOCKS5-Server") {
             try {
@@ -113,7 +238,6 @@ object SshEngine {
             val ins = client.getInputStream()
             val outs = client.getOutputStream()
 
-            // SOCKS5 Greeting
             val ver = ins.read()
             if (ver != 5) {
                 client.close()
@@ -127,10 +251,9 @@ object SshEngine {
             outs.write(byteArrayOf(0x05, 0x00))
             outs.flush()
 
-            // SOCKS5 Request
             val reqVer = ins.read()
             val cmd = ins.read()
-            ins.read() // RSV
+            ins.read()
             val atyp = ins.read()
             if (reqVer != 5 || cmd != 1) {
                 client.close()
@@ -160,7 +283,6 @@ object SshEngine {
             val portLow = ins.read()
             val targetPort = (portHigh shl 8) or portLow
 
-            // Bridge through SSHJ's standard LocalPortForwarder
             bridgeServer = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
             val bridgePort = bridgeServer.localPort
             synchronized(activeBridges) { activeBridges.add(bridgeServer) }
@@ -174,7 +296,6 @@ object SshEngine {
 
             bridgeSocket = Socket("127.0.0.1", bridgePort)
 
-            // Reply SOCKS5 Success
             outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             outs.flush()
 
