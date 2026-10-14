@@ -31,8 +31,15 @@ object XrayCore {
     fun RunXrayFromJSON(configJson: String): Boolean {
         return try {
             VpnStateBridge.addLog("Starting Xray-core engine...")
+
+            // Automatically strip removed "allowInsecure" field if present in any raw config
+            val sanitizedConfig = configJson
+                .replace(Regex(""""allowInsecure"\s*:\s*(true|false)\s*,\s*"""), "")
+                .replace(Regex(""",\s*"allowInsecure"\s*:\s*(true|false)"""), "")
+                .replace(Regex(""""allowInsecure"\s*:\s*(true|false)"""), "")
+
             val payload = JsonObject().apply {
-                addProperty("xrayJson", configJson)
+                addProperty("xrayJson", sanitizedConfig)
             }
             val request = JsonObject().apply {
                 addProperty("apiVersion", 3)
@@ -64,11 +71,12 @@ object XrayCore {
 
     fun verifyServerReachable(host: String, port: Int): Boolean {
         return try {
-            VpnStateBridge.addLog("Probing remote endpoint $host:$port...")
+            val cleanHost = host.trim()
+            VpnStateBridge.addLog("Connecting to endpoint $cleanHost:$port...")
             Socket().use { socket ->
-                socket.connect(InetSocketAddress(host.trim(), port), 8000)
+                socket.connect(InetSocketAddress(cleanHost, port), 10000)
             }
-            VpnStateBridge.addLog("Endpoint $host:$port is reachable.")
+            VpnStateBridge.addLog("Endpoint $cleanHost:$port is reachable.")
             true
         } catch (t: Throwable) {
             VpnStateBridge.addLog("Endpoint unreachable ($host:$port): ${t.message}")
