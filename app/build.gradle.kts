@@ -1,10 +1,9 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt") // Required for Room Database compilation
+    id("kotlin-kapt")
 }
 
-// Prevents Compose annotation crashes during Room/KAPT compilation
 kapt {
     correctErrorTypes = true
 }
@@ -37,6 +36,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // Ensures unstripped native engines (.so files) are extracted and loaded cleanly
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
@@ -48,14 +54,14 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended") // Added to fix missing Icons (Shield, Article, ContentPaste)
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.8.2")
 
     // Room Database & SQLCipher (Encrypted Storage)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
-    implementation("net.zetetic:sqlcipher-android:4.5.4") // Fixed legacy library name for zetetic
+    implementation("net.zetetic:sqlcipher-android:4.5.4")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
 
     // Settings DataStore
