@@ -68,10 +68,11 @@ object SlowDnsEngine {
 
             thread(start = true, name = "SlowDNS-Logger") {
                 try {
-                    val reader = BufferedReader(InputStreamReader(dnsttProcess!!.inputStream))
-                    var line: String?
-                    while (isRunning && reader.readLine().also { line = it } != null) {
-                        val text = line?.trim() ?: continue
+                    val proc = dnsttProcess ?: return@thread
+                    val reader = BufferedReader(InputStreamReader(proc.inputStream))
+                    while (isRunning) {
+                        val line = reader.readLine() ?: break
+                        val text = line.trim()
                         if (text.isNotEmpty()) {
                             Log.d(TAG, text)
                             VpnStateBridge.addLog("[DNSTT] $text")
