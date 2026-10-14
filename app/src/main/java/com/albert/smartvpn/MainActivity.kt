@@ -119,7 +119,7 @@ class MainActivity : ComponentActivity() {
                 action = SmartVpnService.ACTION_STOP
             }
             startService(stopIntent)
-            VpnStateBridge.updateState("DISCONNECTED", "Disconnecting...")
+            VpnStateBridge.updateState("DISCONNECTED", "Idle")
         } else {
             val intent = VpnService.prepare(this)
             if (intent != null) {
