@@ -20,7 +20,7 @@ data class VpnProfile(
     val flow: String = "",
     val rawJson: String = "",
     val isSelected: Boolean = false,
-    // Advanced Tunnel / Edutecz Fields
+    // Advanced Tunnel Fields
     val sshUser: String = "",
     val sshPass: String = "",
     val payload: String = "",
@@ -33,5 +33,9 @@ data class VpnProfile(
     val customDns: String = "1.1.1.1",
     val enableCompression: Boolean = true,
     val autoReconnect: Boolean = true,
-    val enableWakeLock: Boolean = true
+    val enableWakeLock: Boolean = true,
+    // Config Lock & Share Protection
+    val isLocked: Boolean = false,
+    val lockPassphrase: String = "",
+    val configNote: String = ""
 )
