@@ -38,7 +38,7 @@ class SmartVpnService : VpnService() {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Uncaught coroutine error", throwable)
-        VpnStateBridge.addLog("Fatal Engine Error: ${throwable.message}")
+        VpnStateBridge.addLog("Engine Error: ${throwable.message}")
         VpnStateBridge.updateState("DISCONNECTED", "Error")
         stopVpnPipeline(resetStatus = false)
     }
@@ -73,7 +73,6 @@ class SmartVpnService : VpnService() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Foreground start fallback: ${t.message}")
             try {
                 startForeground(NOTIFICATION_ID, notification)
             } catch (_: Throwable) {}
@@ -92,7 +91,7 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                VpnStateBridge.addLog("Loaded profile: ${profile.name} (${profile.protocol})")
+                VpnStateBridge.addLog("Starting profile: ${profile.name} (${profile.protocol})")
                 val localSocksPort = 10808
                 val proto = profile.protocol.uppercase()
 
@@ -114,20 +113,12 @@ class SmartVpnService : VpnService() {
                         proxyPort = profile.proxyPort
                     )
                 } else {
-                    if (profile.uuid.isBlank()) {
-                        VpnStateBridge.addLog("Error: UUID / Password is empty for ${profile.protocol}!")
-                        false
-                    } else if (!XrayCore.verifyServerReachable(profile.server, profile.port)) {
-                        false
-                    } else {
-                        val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
-                        XrayCore.RunXrayFromJSON(configJson)
-                    }
+                    val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
+                    XrayCore.RunXrayFromJSON(configJson)
                 }
 
-                // Strictly abort if login or engine handshake failed!
                 if (!engineStarted) {
-                    VpnStateBridge.addLog("Connection aborted: Authentication or engine handshake failed.")
+                    VpnStateBridge.addLog("Connection failed: Check username, password, or server host.")
                     VpnStateBridge.updateState("DISCONNECTED", "Auth / Conn Failed")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -148,8 +139,8 @@ class SmartVpnService : VpnService() {
                 vpnInterface = builder.establish()
                 val fd = vpnInterface?.fd
                 if (fd == null) {
-                    VpnStateBridge.addLog("Error: Android OS failed to establish TUN interface.")
-                    VpnStateBridge.updateState("DISCONNECTED", "TUN Failed")
+                    VpnStateBridge.addLog("Error: Could not open Android VPN TUN interface.")
+                    VpnStateBridge.updateState("DISCONNECTED", "TUN Error")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
@@ -157,7 +148,7 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
 
                 VpnStateBridge.updateState("CONNECTED", "Protected")
-                VpnStateBridge.addLog("Tunnel established! Connected to ${profile.name}.")
+                VpnStateBridge.addLog("CONNECTED! Traffic is now routed through ${profile.name}.")
 
                 val nm = getSystemService(NotificationManager::class.java)
                 nm.notify(NOTIFICATION_ID, buildNotification("Connected to ${profile.name}"))
