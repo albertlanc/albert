@@ -17,10 +17,13 @@ import com.albert.smartvpn.data.VpnProfile
 import com.albert.smartvpn.engine.SshEngine
 import com.albert.smartvpn.engine.Tun2Socks
 import com.albert.smartvpn.engine.XrayCore
+import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
 class SmartVpnService : VpnService() {
@@ -33,7 +36,14 @@ class SmartVpnService : VpnService() {
         private const val TAG = "SmartVpnService"
     }
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Uncaught coroutine error", throwable)
+        VpnStateBridge.addLog("Fatal Engine Error: ${throwable.message}")
+        VpnStateBridge.updateState("DISCONNECTED", "Error")
+        stopVpnPipeline(resetStatus = false)
+    }
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
     private var vpnInterface: ParcelFileDescriptor? = null
 
     override fun onCreate() {
@@ -44,12 +54,13 @@ class SmartVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startVpnPipeline()
-            ACTION_STOP -> stopVpnPipeline()
+            ACTION_STOP -> stopVpnPipeline(resetStatus = true)
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startVpnPipeline() {
+        VpnStateBridge.updateState("CONNECTING", "Initializing...")
         val notification = buildNotification("Connecting Smart VPN...")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -61,43 +72,68 @@ class SmartVpnService : VpnService() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Foreground start error: ${e.message}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Foreground start fallback: ${t.message}")
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (_: Throwable) {}
         }
 
         serviceScope.launch {
             try {
                 val dao = AppDatabase.getDatabase(applicationContext).profileDao()
                 val profile = dao.getSelectedProfile()
+                    ?: dao.getAllProfiles().firstOrNull()?.firstOrNull()
 
                 if (profile == null) {
-                    Log.e(TAG, "No profile selected.")
-                    stopVpnPipeline()
+                    VpnStateBridge.addLog("Error: No configuration profile found.")
+                    VpnStateBridge.updateState("DISCONNECTED", "No Profile")
+                    stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
+                VpnStateBridge.addLog("Loaded profile: ${profile.name} (${profile.protocol})")
                 val localSocksPort = 10808
                 val proto = profile.protocol.uppercase()
 
                 val engineStarted = if (proto.contains("SSH") || proto == "SLOWDNS") {
+                    val targetHost = if (proto == "SLOWDNS" && profile.slowDnsServerIp.isNotBlank()) {
+                        profile.slowDnsServerIp
+                    } else {
+                        profile.server
+                    }
                     SshEngine.startSshTunnel(
-                        host = profile.server,
+                        host = targetHost,
                         port = profile.port,
                         user = profile.sshUser.ifBlank { profile.uuid },
                         pass = profile.sshPass,
                         localPort = localSocksPort,
                         payloadTemplate = profile.payload,
-                        sni = profile.sni
+                        sni = profile.sni,
+                        proxyHost = profile.proxyHost,
+                        proxyPort = profile.proxyPort
                     )
                 } else {
-                    val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
-                    XrayCore.RunXrayFromJSON(configJson)
+                    if (profile.uuid.isBlank()) {
+                        VpnStateBridge.addLog("Error: UUID / Password is empty for ${profile.protocol}!")
+                        false
+                    } else if (!XrayCore.verifyServerReachable(profile.server, profile.port)) {
+                        false
+                    } else {
+                        val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
+                        XrayCore.RunXrayFromJSON(configJson)
+                    }
                 }
 
+                // Strictly abort if login or engine handshake failed!
                 if (!engineStarted) {
-                    Log.w(TAG, "Engine returned false, continuing with TUN interface setup...")
+                    VpnStateBridge.addLog("Connection aborted: Authentication or engine handshake failed.")
+                    VpnStateBridge.updateState("DISCONNECTED", "Auth / Conn Failed")
+                    stopVpnPipeline(resetStatus = false)
+                    return@launch
                 }
 
+                VpnStateBridge.updateState("CONNECTING", "Opening TUN...")
                 val builder = Builder()
                     .setSession(profile.name)
                     .setMtu(1500)
@@ -107,18 +143,29 @@ class SmartVpnService : VpnService() {
 
                 try {
                     builder.addDisallowedApplication(packageName)
-                } catch (_: Exception) {}
+                } catch (_: Throwable) {}
 
                 vpnInterface = builder.establish()
-                vpnInterface?.fd?.let { fd ->
-                    Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
+                val fd = vpnInterface?.fd
+                if (fd == null) {
+                    VpnStateBridge.addLog("Error: Android OS failed to establish TUN interface.")
+                    VpnStateBridge.updateState("DISCONNECTED", "TUN Failed")
+                    stopVpnPipeline(resetStatus = false)
+                    return@launch
                 }
+
+                Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
+
+                VpnStateBridge.updateState("CONNECTED", "Protected")
+                VpnStateBridge.addLog("Tunnel established! Connected to ${profile.name}.")
 
                 val nm = getSystemService(NotificationManager::class.java)
                 nm.notify(NOTIFICATION_ID, buildNotification("Connected to ${profile.name}"))
-            } catch (e: Throwable) {
-                Log.e(TAG, "VPN Pipeline error: ${e.message}", e)
-                stopVpnPipeline()
+            } catch (t: Throwable) {
+                Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
+                VpnStateBridge.addLog("Pipeline Error: ${t.message}")
+                VpnStateBridge.updateState("DISCONNECTED", "Failed")
+                stopVpnPipeline(resetStatus = false)
             }
         }
     }
@@ -167,7 +214,7 @@ class SmartVpnService : VpnService() {
         """.trimIndent()
     }
 
-    private fun stopVpnPipeline() {
+    private fun stopVpnPipeline(resetStatus: Boolean) {
         serviceScope.launch {
             try {
                 Tun2Socks.stopTunnel()
@@ -175,10 +222,16 @@ class SmartVpnService : VpnService() {
                 SshEngine.stopSshTunnel()
                 vpnInterface?.close()
                 vpnInterface = null
-            } catch (e: Throwable) {
-                Log.e(TAG, "Error stopping VPN: ${e.message}")
+                if (resetStatus) {
+                    VpnStateBridge.updateState("DISCONNECTED", "Idle")
+                    VpnStateBridge.addLog("Tunnel disconnected.")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error stopping VPN: ${t.message}")
             } finally {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (_: Throwable) {}
                 stopSelf()
             }
         }
