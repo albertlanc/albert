@@ -21,6 +21,7 @@ import com.albert.smartvpn.ui.screens.HomeScreen
 import com.albert.smartvpn.ui.screens.LogsScreen
 import com.albert.smartvpn.ui.screens.NetworkToolsScreen
 import com.albert.smartvpn.ui.theme.SmartVpnTheme
+import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import com.albert.smartvpn.ui.viewmodel.VpnViewModel
 import com.albert.smartvpn.vpn.SmartVpnService
 
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK) {
             startVpnService()
         } else {
+            VpnStateBridge.updateState("DISCONNECTED", "Permission Denied")
             viewModel.addLog("VPN permission was denied by the user.")
         }
     }
@@ -42,6 +44,7 @@ class MainActivity : ComponentActivity() {
             SmartVpnTheme {
                 var selectedTab by remember { mutableIntStateOf(0) }
                 val isConnected by viewModel.isConnected.collectAsState()
+                val connectionState by viewModel.connectionState.collectAsState()
                 val profiles by viewModel.profiles.collectAsState()
                 val activeProfile = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
 
@@ -79,7 +82,13 @@ class MainActivity : ComponentActivity() {
                         0 -> HomeScreen(
                             isConnected = isConnected,
                             activeProfile = activeProfile,
-                            onToggleConnection = { toggleVpn(isConnected) },
+                            onToggleConnection = {
+                                if (activeProfile == null) {
+                                    viewModel.addLog("Cannot connect: No profile selected.")
+                                } else {
+                                    toggleVpn(connectionState != "DISCONNECTED")
+                                }
+                            },
                             modifier = Modifier.padding(innerPadding)
                         )
                         1 -> ConfigsScreen(
@@ -103,13 +112,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun toggleVpn(currentlyConnected: Boolean) {
-        if (currentlyConnected) {
+    private fun toggleVpn(isActiveOrConnecting: Boolean) {
+        if (isActiveOrConnecting) {
+            viewModel.addLog("Stopping tunnel...")
             val stopIntent = Intent(this, SmartVpnService::class.java).apply {
                 action = SmartVpnService.ACTION_STOP
             }
             startService(stopIntent)
-            viewModel.setConnectedState(false)
+            VpnStateBridge.updateState("DISCONNECTED", "Disconnecting...")
         } else {
             val intent = VpnService.prepare(this)
             if (intent != null) {
@@ -121,10 +131,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVpnService() {
+        VpnStateBridge.updateState("CONNECTING", "Starting engine...")
         val startIntent = Intent(this, SmartVpnService::class.java).apply {
             action = SmartVpnService.ACTION_START
         }
         startService(startIntent)
-        viewModel.setConnectedState(true)
     }
 }
