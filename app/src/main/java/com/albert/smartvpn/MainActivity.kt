@@ -19,10 +19,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -538,7 +536,6 @@ class MainActivity : ComponentActivity() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Brand Crest & Custom Hexagonal Cyber-Globe Shield Logo
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier.size(144.dp),
@@ -615,7 +612,6 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // What Smart VPN Is All About Card
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1D45)),
                         shape = RoundedCornerShape(14.dp),
@@ -635,7 +631,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // 4 Core Feature Pillars
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -647,7 +642,7 @@ class MainActivity : ComponentActivity() {
                         subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, SlowDNS (DNSTT), VLESS, VMess, Trojan, WireGuard & Hysteria2 QUIC."
                     )
                     SplashFeatureRow(
-                        icon = Icons.Default.bolt,
+                        icon = Icons.Default.Bolt,
                         accent = Color(0xFF00E676),
                         title = "Zero-Rated SNI & DPI Stealth Bypass",
                         subtitle = "Custom HTTP/WebSocket payload injection, packet splitting, and TLS 1.3 SNI bug host fronting on ports 443 & 80."
@@ -668,7 +663,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Bottom Progress Bar & Instant Enter Action
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()
@@ -815,9 +809,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Custom Vector Hexagonal Cyber-Shield & Lightning Crest Logo used in Splash, App Bar & Drawer
- */
 @Composable
 fun SmartVpnCrestLogo(size: Dp) {
     Canvas(modifier = Modifier.size(size)) {
@@ -827,7 +818,6 @@ fun SmartVpnCrestLogo(size: Dp) {
         val cy = h / 2f
         val radius = w * 0.46f
 
-        // 1. Outer Hexagon Path
         val hexPath = Path().apply {
             for (i in 0..5) {
                 val angleRad = Math.toRadians((60.0 * i) - 90.0)
@@ -852,7 +842,6 @@ fun SmartVpnCrestLogo(size: Dp) {
             style = Stroke(width = w * 0.055f, join = StrokeJoin.Round)
         )
 
-        // 2. Inner Armor Shield
         val shieldPath = Path().apply {
             moveTo(cx, h * 0.20f)
             lineTo(w * 0.76f, h * 0.31f)
@@ -878,7 +867,6 @@ fun SmartVpnCrestLogo(size: Dp) {
             style = Stroke(width = w * 0.035f, join = StrokeJoin.Round)
         )
 
-        // 3. Central Cyber Bolt / Key Crest
         val boltPath = Path().apply {
             moveTo(cx + w * 0.04f, h * 0.30f)
             lineTo(cx - w * 0.10f, h * 0.52f)
