@@ -20,6 +20,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketAddress
+import java.net.SocketTimeoutException
 import java.security.KeyPairGenerator
 import java.security.Provider
 import java.security.SecureRandom
@@ -75,7 +76,6 @@ object SshEngine {
             }
         }
 
-        // Compact algorithm list for SlowDNS so the KEX packet fits cleanly inside DNS MTU
         if (isSlowDns) {
             val fastKex = config.keyExchangeFactories.filter {
                 it.name.contains("25519", ignoreCase = true) ||
@@ -173,8 +173,6 @@ object SshEngine {
             }
 
             if (useCustomFactory) {
-                // Pass 127.0.0.1 so SSHJ does not perform a redundant DNS lookup;
-                // PushbackWrappedSocket ignores the second connect() call.
                 sshClient?.connect("127.0.0.1", port)
             } else {
                 sshClient?.connect(cleanHost, port)
@@ -228,76 +226,169 @@ object SshEngine {
             override fun createSocket(host: InetAddress?, port: Int): Socket = openTunneledSocket()
             override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket = openTunneledSocket()
 
-            private fun openTunneledSocket(): Socket {
-                val useProxy = mode == "SSH+PAYLOAD" && proxyHost.isNotEmpty()
-                val tcpHost = if (useProxy) proxyHost else targetHost
-                val tcpPort = if (useProxy) proxyPort else targetPort
-
-                VpnStateBridge.addLog("Opening TCP socket to $tcpHost:$tcpPort...")
+            private fun openSslSocket(tcpHost: String, tcpPort: Int, sniHost: String, forceHttp1Alpn: Boolean): SSLSocket {
                 val baseSocket = Socket()
                 baseSocket.tcpNoDelay = true
                 baseSocket.keepAlive = true
                 baseSocket.connect(InetSocketAddress(tcpHost, tcpPort), 15000)
 
+                val sslFactory = createTrustAllSslSocketFactory()
+                val sslSock = sslFactory.createSocket(baseSocket, sniHost, tcpPort, true) as SSLSocket
+                val params = sslSock.sslParameters
+                params.serverNames = listOf(SNIHostName(sniHost))
+                if (forceHttp1Alpn && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    params.applicationProtocols = arrayOf("http/1.1")
+                }
+                sslSock.sslParameters = params
+                sslSock.startHandshake()
+                return sslSock
+            }
+
+            private fun openTunneledSocket(): Socket {
+                val useProxy = mode == "SSH+PAYLOAD" && proxyHost.isNotEmpty()
+                val tcpHost = if (useProxy) proxyHost else targetHost
+                val tcpPort = if (useProxy) proxyPort else targetPort
+                val sniHost = sni.ifEmpty { targetHost }
+
+                // 1. Pure SSH+SSL Mode with Smart Stunnel vs. WebSocket Auto-Detection
+                if (mode == "SSH+SSL") {
+                    VpnStateBridge.addLog("Opening SSL/TLS socket to $tcpHost:$tcpPort (SNI: $sniHost)...")
+                    val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = false)
+                    VpnStateBridge.addLog("SSL/TLS Handshake established (${sslSock.session.protocol}).")
+
+                    val pushbackIn = PushbackInputStream(sslSock.getInputStream(), 8192)
+                    val prevTimeout = sslSock.soTimeout
+                    sslSock.soTimeout = 1500
+                    try {
+                        val peek = ByteArray(16)
+                        val n = pushbackIn.read(peek)
+                        if (n > 0) {
+                            val str = String(peek, 0, n, Charsets.ISO_8859_1)
+                            pushbackIn.unread(peek, 0, n)
+                            if (str.startsWith("SSH-")) {
+                                VpnStateBridge.addLog("Direct Stunnel SSH-2.0 banner detected.")
+                                sslSock.soTimeout = prevTimeout
+                                return PushbackWrappedSocket(sslSock, pushbackIn)
+                            }
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // Server did not send SSH-2.0- immediately -> Port 443 is behind an HTTP/WS reverse proxy!
+                    } catch (_: Throwable) {}
+
+                    // Auto-Upgrade over WebSocket so port 443 Nginx/Xray servers still connect in SSH+SSL mode!
+                    VpnStateBridge.addLog("Port $tcpPort requires WebSocket upgrade -> Sending WS handshake...")
+                    try {
+                        sslSock.soTimeout = 10000
+                        val autoWsPayload =
+                            "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
+                        val out = sslSock.getOutputStream()
+                        out.write(autoWsPayload.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn)
+                        sslSock.soTimeout = prevTimeout
+                        return PushbackWrappedSocket(sslSock, pushbackIn)
+                    } catch (_: Throwable) {
+                        try { sslSock.close() } catch (_: Throwable) {}
+                        // Reconnect with explicit http/1.1 ALPN and perform WS upgrade
+                        val fallbackSsl = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = true)
+                        val fbPushback = PushbackInputStream(fallbackSsl.getInputStream(), 8192)
+                        val autoWsPayload =
+                            "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
+                        fallbackSsl.getOutputStream().apply {
+                            write(autoWsPayload.toByteArray(Charsets.UTF_8))
+                            flush()
+                        }
+                        fallbackSsl.soTimeout = 10000
+                        try {
+                            consumeHttpUpgradeOrPreserveSshBanner(fbPushback)
+                        } finally {
+                            fallbackSsl.soTimeout = 0
+                        }
+                        return PushbackWrappedSocket(fallbackSsl, fbPushback)
+                    }
+                }
+
+                // 2. SSH+WS+SNI+PAYLOAD and SSH+PAYLOAD Modes
+                VpnStateBridge.addLog("Opening TCP socket to $tcpHost:$tcpPort...")
                 val shouldUseTls = when (mode) {
-                    "SSH+SSL" -> true
                     "SSH+WS+SNI+PAYLOAD" -> (targetPort in tlsPorts) || (targetPort != 80 && targetPort != 8080 && sni.isNotEmpty())
                     "SSH+PAYLOAD" -> (tcpPort in tlsPorts) || (targetPort in tlsPorts)
                     else -> false
                 }
 
                 val activeSocket: Socket = if (shouldUseTls) {
-                    val sniHost = sni.ifEmpty { targetHost }
                     VpnStateBridge.addLog("Performing SSL/TLS Handshake (SNI: $sniHost)...")
-                    val sslFactory = createTrustAllSslSocketFactory()
-                    val sslSock = sslFactory.createSocket(baseSocket, sniHost, tcpPort, true) as SSLSocket
-                    val params = sslSock.sslParameters
-                    params.serverNames = listOf(SNIHostName(sniHost))
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        params.applicationProtocols = arrayOf("http/1.1")
-                    }
-                    sslSock.sslParameters = params
-                    sslSock.startHandshake()
+                    val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = false)
                     VpnStateBridge.addLog("SSL/TLS Handshake established (${sslSock.session.protocol}).")
                     sslSock
                 } else {
-                    baseSocket
+                    Socket().apply {
+                        tcpNoDelay = true
+                        keepAlive = true
+                        connect(InetSocketAddress(tcpHost, tcpPort), 15000)
+                    }
                 }
 
                 val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 8192)
 
-                // Pure SSH+SSL (no payload, no proxy) wraps activeSocket so SSHJ's second connect() call is ignored
-                if (mode == "SSH+SSL" || payloadTemplate.isBlank()) {
-                    return PushbackWrappedSocket(activeSocket, pushbackIn)
-                }
-
-                val formatted = PayloadGenerator.generatePayload(
-                    template = payloadTemplate,
-                    targetHost = targetHost,
-                    targetPort = targetPort,
-                    sni = sni.ifEmpty { targetHost }
-                )
-
-                val out: OutputStream = activeSocket.getOutputStream()
-                val chunks = formatted.split(Regex("\\[(instant_)?split\\]", RegexOption.IGNORE_CASE))
-                for ((index, chunk) in chunks.withIndex()) {
-                    if (chunk.isNotEmpty()) {
-                        out.write(chunk.toByteArray(Charsets.UTF_8))
-                        out.flush()
-                        if (index < chunks.size - 1) {
-                            Thread.sleep(60)
+                // Quick 450ms pre-payload check: if the server already sent "SSH-2.0-" immediately (pure Stunnel port),
+                // do not inject HTTP payload into the SSH banner exchange!
+                if (shouldUseTls) {
+                    val prevTimeout = activeSocket.soTimeout
+                    activeSocket.soTimeout = 450
+                    try {
+                        val peek = ByteArray(16)
+                        val n = pushbackIn.read(peek)
+                        if (n > 0) {
+                            val str = String(peek, 0, n, Charsets.ISO_8859_1)
+                            pushbackIn.unread(peek, 0, n)
+                            if (str.startsWith("SSH-")) {
+                                VpnStateBridge.addLog("Server sent direct SSH-2.0 banner (bypassing HTTP payload).")
+                                activeSocket.soTimeout = prevTimeout
+                                return PushbackWrappedSocket(activeSocket, pushbackIn)
+                            }
                         }
+                    } catch (_: SocketTimeoutException) {
+                        // Normal for WebSocket servers: server is waiting for our HTTP payload
+                    } finally {
+                        activeSocket.soTimeout = prevTimeout
                     }
                 }
-                VpnStateBridge.addLog("Injected HTTP/WS Payload (${formatted.length} bytes).")
 
-                val previousTimeout = activeSocket.soTimeout
-                activeSocket.soTimeout = 12000
+                if (payloadTemplate.isNotBlank()) {
+                    val normalizedTemplate = if (mode == "SSH+WS+SNI+PAYLOAD") {
+                        payloadTemplate.replace("Host: [sni]", "Host: [host]", ignoreCase = true)
+                    } else {
+                        payloadTemplate
+                    }
 
-                try {
-                    consumeHttpUpgradeOrPreserveSshBanner(pushbackIn)
-                } finally {
-                    activeSocket.soTimeout = previousTimeout
+                    val formatted = PayloadGenerator.generatePayload(
+                        template = normalizedTemplate,
+                        targetHost = targetHost,
+                        targetPort = targetPort,
+                        sni = sniHost
+                    )
+
+                    val out: OutputStream = activeSocket.getOutputStream()
+                    val chunks = formatted.split(Regex("\\[(instant_)?split\\]", RegexOption.IGNORE_CASE))
+                    for ((index, chunk) in chunks.withIndex()) {
+                        if (chunk.isNotEmpty()) {
+                            out.write(chunk.toByteArray(Charsets.UTF_8))
+                            out.flush()
+                            if (index < chunks.size - 1) {
+                                Thread.sleep(60)
+                            }
+                        }
+                    }
+                    VpnStateBridge.addLog("Injected HTTP/WS Payload (${formatted.length} bytes).")
+
+                    val previousTimeout = activeSocket.soTimeout
+                    activeSocket.soTimeout = 12000
+                    try {
+                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn)
+                    } finally {
+                        activeSocket.soTimeout = previousTimeout
+                    }
                 }
 
                 return PushbackWrappedSocket(activeSocket, pushbackIn)
@@ -316,14 +407,17 @@ object SshEngine {
 
             val currentStr = String(headerBuf, 0, len, Charsets.ISO_8859_1)
 
-            // Case 1: Server sent SSH-2.0- directly without HTTP headers
-            if (len >= 8 && currentStr.startsWith("SSH-")) {
-                pushbackIn.unread(headerBuf, 0, len)
-                VpnStateBridge.addLog("Direct SSH-2.0 banner received from server.")
+            // If "SSH-2.0-" appears anywhere in the stream (with or without preceding HTTP headers),
+            // push back from "SSH-2.0-" so SSHJ receives the exact server identification line!
+            val sshIdx = currentStr.indexOf("SSH-2.0-")
+            if (sshIdx >= 0 && currentStr.indexOf('\n', sshIdx) > sshIdx) {
+                val sshBannerBytes = currentStr.substring(sshIdx).toByteArray(Charsets.ISO_8859_1)
+                pushbackIn.unread(sshBannerBytes, 0, sshBannerBytes.size)
+                val bannerLine = currentStr.substring(sshIdx).lineSequence().firstOrNull()?.trim() ?: "SSH-2.0"
+                VpnStateBridge.addLog("Received SSH Banner: $bannerLine")
                 return
             }
 
-            // Case 2: Server sent HTTP response header ending in \r\n\r\n
             if (currentStr.endsWith("\r\n\r\n")) {
                 val firstLine = currentStr.lineSequence().firstOrNull()?.trim() ?: ""
                 VpnStateBridge.addLog("HTTP/WS Response: $firstLine")
@@ -345,26 +439,13 @@ object SshEngine {
         }
     }
 
-    /**
-     * Wraps an already-connected & upgraded Socket/SSLSocket and overrides connect() / bind()
-     * as no-ops so SSHJ's SocketClient.connect() never throws SocketException("already connected").
-     */
     private class PushbackWrappedSocket(
         private val delegate: Socket,
         private val customIn: InputStream
     ) : Socket() {
-        override fun connect(endpoint: SocketAddress?) {
-            // No-op: underlying socket is already connected and upgraded
-        }
-
-        override fun connect(endpoint: SocketAddress?, timeout: Int) {
-            // No-op: underlying socket is already connected and upgraded
-        }
-
-        override fun bind(bindpoint: SocketAddress?) {
-            // No-op
-        }
-
+        override fun connect(endpoint: SocketAddress?) {}
+        override fun connect(endpoint: SocketAddress?, timeout: Int) {}
+        override fun bind(bindpoint: SocketAddress?) {}
         override fun getInputStream(): InputStream = customIn
         override fun getOutputStream(): OutputStream = delegate.getOutputStream()
         override fun isConnected(): Boolean = delegate.isConnected
@@ -458,7 +539,7 @@ object SshEngine {
 
             val reqVer = ins.read()
             val cmd = ins.read()
-            ins.read() // RSV
+            ins.read()
             val atyp = ins.read()
             if (reqVer != 5) {
                 client.close()
@@ -488,7 +569,6 @@ object SshEngine {
             val portLow = ins.read()
             val targetPort = (portHigh shl 8) or portLow
 
-            // Handle SOCKS5 UDP_ASSOCIATE (cmd == 3) for Tun2Socks DNS queries
             if (cmd == 3) {
                 handleSocks5UdpAssociate(client, ins, outs)
                 return
@@ -539,7 +619,6 @@ object SshEngine {
             synchronized(activeUdpSockets) { activeUdpSockets.add(udpRelay) }
             val localUdpPort = udpRelay.localPort
 
-            // Reply with bound UDP relay address 127.0.0.1:localUdpPort
             outs.write(
                 byteArrayOf(
                     0x05, 0x00, 0x00, 0x01,
@@ -591,7 +670,6 @@ object SshEngine {
                             var bServer: ServerSocket? = null
                             var bSocket: Socket? = null
                             try {
-                                // Forward DNS query over SSH TCP (RFC 1035 2-byte length prefix)
                                 val dnsTarget = if (dstPort == 53) dstHost else "8.8.8.8"
                                 val pair = openSshForwardSocket(dnsTarget, 53)
                                 bServer = pair.first
@@ -628,7 +706,6 @@ object SshEngine {
                 }
             }
 
-            // Keep UDP association alive until the TCP control stream closes
             while (isRunning && ins.read() != -1) {}
         } catch (_: Throwable) {
         } finally {
