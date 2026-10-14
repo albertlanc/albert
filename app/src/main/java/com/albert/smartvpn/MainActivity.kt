@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -31,17 +32,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -55,6 +61,8 @@ import com.albert.smartvpn.ui.viewmodel.VpnViewModel
 import com.albert.smartvpn.vpn.SmartVpnService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
 
@@ -85,7 +93,7 @@ class MainActivity : ComponentActivity() {
             SmartVpnTheme {
                 var showSplash by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
-                    delay(2800L)
+                    delay(4500L)
                     showSplash = false
                 }
 
@@ -97,7 +105,9 @@ class MainActivity : ComponentActivity() {
                         enter = fadeIn(),
                         exit = fadeOut()
                     ) {
-                        QuantumCyberSplashScreen()
+                        QuantumCyberSplashScreen(
+                            onEnterNow = { showSplash = false }
+                        )
                     }
                 }
             }
@@ -114,20 +124,29 @@ class MainActivity : ComponentActivity() {
 
         var selectedTab by remember { mutableIntStateOf(0) }
         var activeToolPage by remember { mutableStateOf("PING") }
+        var showThemeMenu by remember { mutableStateOf(false) }
 
         val isConnected by viewModel.isConnected.collectAsState()
         val connectionState by viewModel.connectionState.collectAsState()
         val profiles by viewModel.profiles.collectAsState()
+        val currentThemeMode by VpnStateBridge.themeMode.collectAsState()
         val activeProfile = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
         val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
+
+        val themeOptions = listOf(
+            "AUTO" to "Auto (Morning Light / Night Dark)",
+            "CYBER_DARK" to "Theme 1: Cyber Obsidian (Dark)",
+            "SOLAR_LIGHT" to "Theme 2: Solar Crystal (Daylight)",
+            "ROYAL_GOLD" to "Theme 3: Royal Amethyst & Gold"
+        )
 
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
                 ModalDrawerSheet(
-                    drawerContainerColor = Color(0xFF070E24),
-                    drawerContentColor = Color.White,
-                    modifier = Modifier.width(310.dp)
+                    drawerContainerColor = MaterialTheme.colorScheme.surface,
+                    drawerContentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.width(315.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -140,38 +159,26 @@ class MainActivity : ComponentActivity() {
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 8.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF00F0FF).copy(alpha = 0.2f))
-                                    .border(1.5.dp, Color(0xFF00F0FF), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Shield,
-                                    contentDescription = null,
-                                    tint = Color(0xFF00F0FF)
-                                )
-                            }
+                            SmartVpnCrestLogo(size = 52.dp)
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
                                     text = "SMART VPN ULTRA",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF00F0FF)
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
                                     text = "SSH • SlowDNS • Xray • WG • HY2",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF9FB3C8)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
 
+                        // Device ID Box
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF101D42)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -179,7 +186,7 @@ class MainActivity : ComponentActivity() {
                                 Text(
                                     text = "DEVICE ID (FOR CONFIG LOCK)",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF00F0FF),
+                                    color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -193,7 +200,7 @@ class MainActivity : ComponentActivity() {
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
-                                        color = Color.White
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                     IconButton(
                                         onClick = {
@@ -205,7 +212,7 @@ class MainActivity : ComponentActivity() {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
                                             contentDescription = "Copy Device ID",
-                                            tint = Color(0xFF00F0FF),
+                                            tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
@@ -213,12 +220,42 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color(0xFF1E2D5A))
+                        // Theme Switcher Section inside Drawer
+                        Text(
+                            text = "APPEARANCE & DAY/NIGHT THEME",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 8.dp, start = 4.dp)
+                        )
+                        themeOptions.forEach { (key, label) ->
+                            NavigationDrawerItem(
+                                label = { Text(label, fontSize = 13.sp) },
+                                selected = currentThemeMode == key,
+                                icon = {
+                                    Icon(
+                                        imageVector = when (key) {
+                                            "AUTO" -> Icons.Default.BrightnessAuto
+                                            "SOLAR_LIGHT" -> Icons.Default.WbSunny
+                                            "ROYAL_GOLD" -> Icons.Default.AutoAwesome
+                                            else -> Icons.Default.DarkMode
+                                        },
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    VpnStateBridge.themeMode.value = key
+                                    viewModel.addLog("Switched theme to: $label")
+                                }
+                            )
+                        }
+
+                        Divider(modifier = Modifier.padding(vertical = 6.dp))
 
                         NavigationDrawerItem(
                             label = { Text("Ping / Host Checker") },
                             selected = selectedTab == 3 && activeToolPage == "PING",
-                            icon = { Icon(Icons.Default.NetworkCheck, contentDescription = null, tint = Color(0xFF00F0FF)) },
+                            icon = { Icon(Icons.Default.NetworkCheck, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "PING"
                                 selectedTab = 3
@@ -229,7 +266,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("My IP & GeoIP Lookup") },
                             selected = selectedTab == 3 && activeToolPage == "GEOIP",
-                            icon = { Icon(Icons.Default.Public, contentDescription = null, tint = Color(0xFF00E676)) },
+                            icon = { Icon(Icons.Default.Public, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "GEOIP"
                                 selectedTab = 3
@@ -240,7 +277,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("Advanced SSH Settings") },
                             selected = selectedTab == 3 && activeToolPage == "SSH_SETTINGS",
-                            icon = { Icon(Icons.Default.Tune, contentDescription = null, tint = Color(0xFFFFAB00)) },
+                            icon = { Icon(Icons.Default.Tune, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "SSH_SETTINGS"
                                 selectedTab = 3
@@ -251,7 +288,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("HTTP/WS Payload Generator") },
                             selected = selectedTab == 3 && activeToolPage == "PAYLOAD_GEN",
-                            icon = { Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFF7C4DFF)) },
+                            icon = { Icon(Icons.Default.Code, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "PAYLOAD_GEN"
                                 selectedTab = 3
@@ -262,7 +299,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("SNI / Bug Host Hunter") },
                             selected = selectedTab == 3 && activeToolPage == "SNI_HUNTER",
-                            icon = { Icon(Icons.Default.BugReport, contentDescription = null, tint = Color(0xFF00F0FF)) },
+                            icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "SNI_HUNTER"
                                 selectedTab = 3
@@ -273,7 +310,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("Hotshare / Wi-Fi Tether") },
                             selected = selectedTab == 3 && activeToolPage == "HOTSHARE",
-                            icon = { Icon(Icons.Default.WifiTethering, contentDescription = null, tint = Color(0xFF00E676)) },
+                            icon = { Icon(Icons.Default.WifiTethering, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "HOTSHARE"
                                 selectedTab = 3
@@ -281,12 +318,12 @@ class MainActivity : ComponentActivity() {
                             }
                         )
 
-                        Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color(0xFF1E2D5A))
+                        Divider(modifier = Modifier.padding(vertical = 6.dp))
 
                         NavigationDrawerItem(
                             label = { Text("Battery Keep-Alive (Anti-Kill)") },
                             selected = false,
-                            icon = { Icon(Icons.Default.BatteryChargingFull, contentDescription = null, tint = Color(0xFFFFAB00)) },
+                            icon = { Icon(Icons.Default.BatteryChargingFull, contentDescription = null) },
                             onClick = {
                                 scope.launch { drawerState.close() }
                                 try {
@@ -304,7 +341,7 @@ class MainActivity : ComponentActivity() {
                         NavigationDrawerItem(
                             label = { Text("Share Smart VPN App") },
                             selected = false,
-                            icon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF00F0FF)) },
+                            icon = { Icon(Icons.Default.Share, contentDescription = null) },
                             onClick = {
                                 scope.launch { drawerState.close() }
                                 shareSmartVpnApp()
@@ -318,11 +355,16 @@ class MainActivity : ComponentActivity() {
                 topBar = {
                     TopAppBar(
                         title = {
-                            Text(
-                                text = "SMART VPN ULTRA",
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 1.2.sp
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SmartVpnCrestLogo(size = 30.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "SMART VPN ULTRA",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 18.sp,
+                                    letterSpacing = 1.sp
+                                )
+                            }
                         },
                         navigationIcon = {
                             IconButton(onClick = {
@@ -335,13 +377,56 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         },
+                        actions = {
+                            Box {
+                                IconButton(onClick = { showThemeMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Palette,
+                                        contentDescription = "Select Theme",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showThemeMenu,
+                                    onDismissRequest = { showThemeMenu = false }
+                                ) {
+                                    themeOptions.forEach { (key, label) ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = label,
+                                                    fontWeight = if (currentThemeMode == key) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = when (key) {
+                                                        "AUTO" -> Icons.Default.BrightnessAuto
+                                                        "SOLAR_LIGHT" -> Icons.Default.WbSunny
+                                                        "ROYAL_GOLD" -> Icons.Default.AutoAwesome
+                                                        else -> Icons.Default.DarkMode
+                                                    },
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            },
+                                            onClick = {
+                                                VpnStateBridge.themeMode.value = key
+                                                showThemeMenu = false
+                                                viewModel.addLog("Applied theme: $label")
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color(0xFF070E24)
+                            containerColor = MaterialTheme.colorScheme.surface
                         )
                     )
                 },
                 bottomBar = {
-                    NavigationBar(containerColor = Color(0xFF070E24)) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                         NavigationBarItem(
                             selected = selectedTab == 0,
                             onClick = { selectedTab = 0 },
@@ -405,40 +490,32 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun QuantumCyberSplashScreen() {
-        val infiniteTransition = rememberInfiniteTransition(label = "SplashRadar")
-        val radarAngle by infiniteTransition.animateFloat(
+    private fun QuantumCyberSplashScreen(onEnterNow: () -> Unit) {
+        val infiniteTransition = rememberInfiniteTransition(label = "SplashAnimation")
+        val orbitAngle by infiniteTransition.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2400, easing = LinearEasing)
+                animation = tween(durationMillis = 3600, easing = LinearEasing)
             ),
-            label = "RadarSweep"
+            label = "OrbitAngle"
         )
         val reverseAngle by infiniteTransition.animateFloat(
             initialValue = 360f,
             targetValue = 0f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 3000, easing = LinearEasing)
+                animation = tween(durationMillis = 4800, easing = LinearEasing)
             ),
-            label = "ReverseRing"
+            label = "ReverseOrbit"
         )
 
-        var bootStep by remember { mutableIntStateOf(1) }
+        var progressStep by remember { mutableIntStateOf(1) }
         LaunchedEffect(Unit) {
-            for (step in 1..5) {
-                bootStep = step
-                delay(480L)
+            for (i in 1..5) {
+                progressStep = i
+                delay(750L)
             }
         }
-
-        val bootMessages = listOf(
-            "[OK] Initializing Quantum Stealth Core v4.0...",
-            "[OK] Mounting Go Xray-Core (VLESS / VMess / Trojan)...",
-            "[OK] Activating SSH + WS + SNI + Payload Engine...",
-            "[OK] Starting Native SlowDNS (DNSTT) & Hysteria2 QUIC...",
-            "[OK] Binding WireGuard & Hardware Enclave Lock..."
-        )
 
         Box(
             modifier = Modifier
@@ -446,179 +523,238 @@ class MainActivity : ComponentActivity() {
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF02050D),
-                            Color(0xFF0A1940),
-                            Color(0xFF04091A)
+                            Color(0xFF030714),
+                            Color(0xFF0A183D),
+                            Color(0xFF050B1E)
                         )
                     )
                 )
-                .padding(28.dp),
-            contentAlignment = Alignment.Center
         ) {
             Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(
-                    modifier = Modifier.size(164.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        rotate(radarAngle) {
-                            drawArc(
-                                color = Color(0xFF00F0FF),
-                                startAngle = 0f,
-                                sweepAngle = 135f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = Color(0xFF00E676),
-                                startAngle = 180f,
-                                sweepAngle = 135f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                        rotate(reverseAngle) {
-                            drawArc(
-                                color = Color(0xFF7C4DFF),
-                                startAngle = 30f,
-                                sweepAngle = 100f,
-                                useCenter = false,
-                                topLeft = androidx.compose.ui.geometry.Offset(18.dp.toPx(), 18.dp.toPx()),
-                                size = androidx.compose.ui.geometry.Size(
-                                    size.width - 36.dp.toPx(),
-                                    size.height - 36.dp.toPx()
-                                ),
-                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = Color(0xFFFFAB00),
-                                startAngle = 210f,
-                                sweepAngle = 100f,
-                                useCenter = false,
-                                topLeft = androidx.compose.ui.geometry.Offset(18.dp.toPx(), 18.dp.toPx()),
-                                size = androidx.compose.ui.geometry.Size(
-                                    size.width - 36.dp.toPx(),
-                                    size.height - 36.dp.toPx()
-                                ),
-                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                    }
-
+                // Top Brand Crest & Custom Hexagonal Cyber-Globe Shield Logo
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
-                        modifier = Modifier
-                            .size(96.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFF00F0FF).copy(alpha = 0.45f),
-                                        Color(0xFF0A1940)
-                                    )
-                                )
-                            )
-                            .border(2.dp, Color(0xFF00F0FF), CircleShape),
+                        modifier = Modifier.size(144.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = Color(0xFF00F0FF),
-                            modifier = Modifier.size(52.dp)
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            rotate(orbitAngle) {
+                                drawArc(
+                                    color = Color(0xFF00F0FF),
+                                    startAngle = 0f,
+                                    sweepAngle = 120f,
+                                    useCenter = false,
+                                    style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawArc(
+                                    color = Color(0xFF00E676),
+                                    startAngle = 180f,
+                                    sweepAngle = 120f,
+                                    useCenter = false,
+                                    style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+                            rotate(reverseAngle) {
+                                drawArc(
+                                    color = Color(0xFFFFC107),
+                                    startAngle = 45f,
+                                    sweepAngle = 95f,
+                                    useCenter = false,
+                                    topLeft = Offset(14.dp.toPx(), 14.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(
+                                        size.width - 28.dp.toPx(),
+                                        size.height - 28.dp.toPx()
+                                    ),
+                                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawArc(
+                                    color = Color(0xFF7C4DFF),
+                                    startAngle = 225f,
+                                    sweepAngle = 95f,
+                                    useCenter = false,
+                                    topLeft = Offset(14.dp.toPx(), 14.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(
+                                        size.width - 28.dp.toPx(),
+                                        size.height - 28.dp.toPx()
+                                    ),
+                                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+                        }
+
+                        SmartVpnCrestLogo(size = 94.dp)
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "SMART VPN ULTRA",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        letterSpacing = 2.2.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "NEXT-GEN MULTI-PROTOCOL STEALTH & PRIVACY ENGINE",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00F0FF),
+                        letterSpacing = 1.1.sp,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // What Smart VPN Is All About Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1D45)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFF00F0FF).copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                    ) {
+                        Text(
+                            text = "Engineered for unrestricted global connectivity, Smart VPN Ultra combines military-grade encryption with deep packet inspection (DPI) stealth bypass, custom SNI fronting, and hardware-locked configurations.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFD6E4FF),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(14.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(22.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Text(
-                    text = "SMART VPN ULTRA",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White,
-                    letterSpacing = 2.5.sp
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "QUANTUM MULTI-PROTOCOL STEALTH ARCHITECTURE",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF00F0FF),
-                    letterSpacing = 1.2.sp,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(vertical = 4.dp)
+                // 4 Core Feature Pillars
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    listOf("SSH+WS", "SLOWDNS", "XRAY", "WIREGUARD", "HY2").forEach { badge ->
-                        Surface(
-                            color = Color(0xFF112252),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.border(1.dp, Color(0xFF00F0FF).copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-                        ) {
-                            Text(
-                                text = badge,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF00E676),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
+                    SplashFeatureRow(
+                        icon = Icons.Default.Hub,
+                        accent = Color(0xFF00F0FF),
+                        title = "8-in-1 Multi-Protocol Core",
+                        subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, SlowDNS (DNSTT), VLESS, VMess, Trojan, WireGuard & Hysteria2 QUIC."
+                    )
+                    SplashFeatureRow(
+                        icon = Icons.Default.bolt,
+                        accent = Color(0xFF00E676),
+                        title = "Zero-Rated SNI & DPI Stealth Bypass",
+                        subtitle = "Custom HTTP/WebSocket payload injection, packet splitting, and TLS 1.3 SNI bug host fronting on ports 443 & 80."
+                    )
+                    SplashFeatureRow(
+                        icon = Icons.Default.Fingerprint,
+                        accent = Color(0xFFFFC107),
+                        title = "Hardware Enclave & SQLCipher Security",
+                        subtitle = "AES-256 encrypted profile vault with Device ID (HWID) locking, creator passphrases, QR codes & .svpn sharing."
+                    )
+                    SplashFeatureRow(
+                        icon = Icons.Default.Radar,
+                        accent = Color(0xFF7C4DFF),
+                        title = "Pro Network Diagnostics & Wi-Fi Hotshare",
+                        subtitle = "Built-in TCP/ICMP Ping tester, GeoIP inspector, SNI Bug Host scanner, Payload Generator & LAN Hotspot tethering."
+                    )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF060E24)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, Color(0xFF1E326E), RoundedCornerShape(12.dp))
+                // Bottom Progress Bar & Instant Enter Action
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    LinearProgressIndicator(
+                        progress = progressStep / 5f,
+                        color = Color(0xFF00F0FF),
+                        trackColor = Color(0xFF152657),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        bootMessages.take(bootStep).forEach { msg ->
+                        Text(
+                            text = "INITIALIZING CORE ENGINES • ${progressStep * 20}%",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color(0xFF9FB3C8)
+                        )
+                        TextButton(onClick = onEnterNow) {
                             Text(
-                                text = msg,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                color = Color(0xFF00E676)
+                                text = "Launch Dashboard →",
+                                color = Color(0xFF00E676),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
                             )
                         }
                     }
                 }
+            }
+        }
+    }
 
-                Spacer(modifier = Modifier.height(22.dp))
-
-                LinearProgressIndicator(
-                    progress = bootStep / 5f,
-                    color = Color(0xFF00F0FF),
-                    trackColor = Color(0xFF13224C),
+    @Composable
+    private fun SplashFeatureRow(
+        icon: ImageVector,
+        accent: Color,
+        title: String,
+        subtitle: String
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0A1536)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.78f)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "LOADING ENGINES • ${bootStep * 20}%",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    color = Color(0xFF9FB3C8)
-                )
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(accent.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = subtitle,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = Color(0xFF9FB3C8)
+                    )
+                }
             }
         }
     }
@@ -676,5 +812,85 @@ class MainActivity : ComponentActivity() {
             action = SmartVpnService.ACTION_START
         }
         ContextCompat.startForegroundService(this, startIntent)
+    }
+}
+
+/**
+ * Custom Vector Hexagonal Cyber-Shield & Lightning Crest Logo used in Splash, App Bar & Drawer
+ */
+@Composable
+fun SmartVpnCrestLogo(size: Dp) {
+    Canvas(modifier = Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        val radius = w * 0.46f
+
+        // 1. Outer Hexagon Path
+        val hexPath = Path().apply {
+            for (i in 0..5) {
+                val angleRad = Math.toRadians((60.0 * i) - 90.0)
+                val x = cx + (radius * cos(angleRad)).toFloat()
+                val y = cy + (radius * sin(angleRad)).toFloat()
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
+            close()
+        }
+
+        drawPath(
+            path = hexPath,
+            brush = Brush.linearGradient(
+                colors = listOf(Color(0xFF0A2463), Color(0xFF040D26))
+            )
+        )
+        drawPath(
+            path = hexPath,
+            brush = Brush.linearGradient(
+                colors = listOf(Color(0xFF00F0FF), Color(0xFF00E676), Color(0xFF7C4DFF))
+            ),
+            style = Stroke(width = w * 0.055f, join = StrokeJoin.Round)
+        )
+
+        // 2. Inner Armor Shield
+        val shieldPath = Path().apply {
+            moveTo(cx, h * 0.20f)
+            lineTo(w * 0.76f, h * 0.31f)
+            lineTo(w * 0.76f, h * 0.53f)
+            cubicTo(w * 0.76f, h * 0.69f, cx + w * 0.12f, h * 0.79f, cx, h * 0.84f)
+            cubicTo(cx - w * 0.12f, h * 0.79f, w * 0.24f, h * 0.69f, w * 0.24f, h * 0.53f)
+            lineTo(w * 0.24f, h * 0.31f)
+            close()
+        }
+
+        drawPath(
+            path = shieldPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFF00F0FF).copy(alpha = 0.35f),
+                    Color(0xFF7C4DFF).copy(alpha = 0.25f)
+                )
+            )
+        )
+        drawPath(
+            path = shieldPath,
+            color = Color(0xFF00F0FF),
+            style = Stroke(width = w * 0.035f, join = StrokeJoin.Round)
+        )
+
+        // 3. Central Cyber Bolt / Key Crest
+        val boltPath = Path().apply {
+            moveTo(cx + w * 0.04f, h * 0.30f)
+            lineTo(cx - w * 0.10f, h * 0.52f)
+            lineTo(cx + w * 0.01f, h * 0.52f)
+            lineTo(cx - w * 0.04f, h * 0.72f)
+            lineTo(cx + w * 0.11f, h * 0.47f)
+            lineTo(cx, h * 0.47f)
+            close()
+        }
+        drawPath(
+            path = boltPath,
+            color = Color(0xFF00E676)
+        )
     }
 }
