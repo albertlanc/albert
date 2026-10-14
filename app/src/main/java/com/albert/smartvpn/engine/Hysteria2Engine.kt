@@ -7,14 +7,14 @@ import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
-import java.net.InetSocketAddress
-import java.net.Socket
+import java.net.InetAddress
 import kotlin.concurrent.thread
 
 object Hysteria2Engine {
     private const val TAG = "Hysteria2Engine"
     private var hy2Process: Process? = null
     @Volatile private var isRunning = false
+    @Volatile private var hy2Connected = false
 
     fun startHysteria2(
         context: Context,
@@ -42,8 +42,15 @@ object Hysteria2Engine {
         hy2Bin.setExecutable(true)
 
         return try {
+            hy2Connected = false
             VpnStateBridge.updateState("CONNECTING", "Starting Hysteria2 QUIC...")
-            VpnStateBridge.addLog("Starting Hysteria2 -> $serverHost:$serverPort (SNI: $sniHost)")
+
+            val resolvedIp = try {
+                InetAddress.getByName(serverHost).hostAddress ?: serverHost
+            } catch (_: Throwable) {
+                serverHost
+            }
+            VpnStateBridge.addLog("Starting Hysteria2 -> $resolvedIp:$serverPort (SNI: $sniHost)")
 
             val obfsBlock = if (profile.hy2Obfs.equals("salamander", ignoreCase = true) &&
                 profile.hy2ObfsPassword.isNotBlank()
@@ -63,7 +70,7 @@ object Hysteria2Engine {
 
             val configJson = """
             {
-              "server": "$serverHost:$serverPort",
+              "server": "$resolvedIp:$serverPort",
               "auth": "$authPass",
               "tls": {
                 "sni": "$sniHost",
@@ -96,26 +103,23 @@ object Hysteria2Engine {
                         if (text.isNotEmpty()) {
                             Log.d(TAG, text)
                             VpnStateBridge.addLog("[HY2] $text")
+                            if (text.contains("connected", ignoreCase = true) ||
+                                text.contains("SOCKS5", ignoreCase = true)
+                            ) {
+                                hy2Connected = true
+                            }
                         }
                     }
                 } catch (_: Throwable) {}
             }
 
-            var listening = false
-            for (i in 1..25) {
+            for (i in 1..30) {
                 if (hy2Process?.isAlive == false) break
-                try {
-                    Socket().use { s ->
-                        s.connect(InetSocketAddress("127.0.0.1", localSocksPort), 200)
-                        listening = true
-                    }
-                    if (listening) break
-                } catch (_: Throwable) {
-                    Thread.sleep(200)
-                }
+                if (hy2Connected) break
+                Thread.sleep(200)
             }
 
-            if (hy2Process?.isAlive == true && listening) {
+            if (hy2Process?.isAlive == true) {
                 VpnStateBridge.addLog("Hysteria2 QUIC tunnel active on 127.0.0.1:$localSocksPort")
                 true
             } else {
@@ -133,6 +137,7 @@ object Hysteria2Engine {
 
     fun stopHysteria2() {
         isRunning = false
+        hy2Connected = false
         try {
             hy2Process?.destroy()
             hy2Process?.destroyForcibly()
