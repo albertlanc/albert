@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
                             onSelectProfile = { viewModel.selectProfile(it.id) },
                             onDeleteProfile = { viewModel.deleteProfile(it) },
                             onImportClipboard = { viewModel.importFromClipboard(it) },
+                            onSaveProfile = { viewModel.saveManualProfile(it) },
                             modifier = Modifier.padding(innerPadding)
                         )
                         2 -> LogsScreen(
