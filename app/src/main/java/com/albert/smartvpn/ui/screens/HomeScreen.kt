@@ -31,7 +31,7 @@ fun HomeScreen(
     val buttonColor by animateColorAsState(
         targetValue = when (connectionState) {
             "CONNECTED" -> MaterialTheme.colorScheme.primary
-            "CONNECTING" -> Color(0xFFFFAB00) // Amber while connecting
+            "CONNECTING" -> Color(0xFFFFAB00)
             else -> MaterialTheme.colorScheme.surfaceVariant
         },
         label = "ButtonColor"
@@ -44,7 +44,6 @@ fun HomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Active Profile Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -79,7 +78,6 @@ fun HomeScreen(
             }
         }
 
-        // Center Power Button
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Button(
                 onClick = onToggleConnection,
@@ -119,7 +117,6 @@ fun HomeScreen(
             )
         }
 
-        // Footer Stats
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
