@@ -7,20 +7,17 @@ import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import javax.net.ssl.SNIHostName
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 import kotlin.concurrent.thread
 
 object SshEngine {
     private const val TAG = "SshEngine"
     private var sshClient: SSHClient? = null
-    private var isRunning = false
+    @Volatile private var isRunning = false
     private var localServer: ServerSocket? = null
-    private var preSocket: Socket? = null
 
     fun startSshTunnel(
         host: String,
@@ -49,54 +46,14 @@ object SshEngine {
 
         return try {
             VpnStateBridge.updateState("CONNECTING", "Connecting to $cleanHost:$port...")
-            VpnStateBridge.addLog("Initializing SSH engine for $cleanHost:$port (User: $cleanUser)")
-
-            // Optional HTTP Payload / SSL SNI pre-handshake verification
-            if (sni.isNotBlank()) {
-                VpnStateBridge.addLog("Performing TLS SNI handshake with Bug Host: $sni")
-                val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                val rawSock = Socket()
-                rawSock.connect(InetSocketAddress(cleanHost, port), 10000)
-                val sslSock = factory.createSocket(rawSock, sni.trim(), port, true) as SSLSocket
-                val params = sslSock.sslParameters
-                params.serverNames = listOf(SNIHostName(sni.trim()))
-                sslSock.sslParameters = params
-                sslSock.startHandshake()
-                VpnStateBridge.addLog("TLS SNI handshake succeeded (${sslSock.session.protocol}).")
-                preSocket = sslSock
-            } else if (proxyHost.isNotBlank()) {
-                VpnStateBridge.addLog("Connecting via Remote Proxy $proxyHost:$proxyPort...")
-                val proxySock = Socket()
-                proxySock.connect(InetSocketAddress(proxyHost.trim(), proxyPort), 10000)
-                if (payloadTemplate.isNotBlank()) {
-                    val formattedPayload = PayloadGenerator.generatePayload(
-                        payloadTemplate,
-                        cleanHost,
-                        port,
-                        sni
-                    )
-                    VpnStateBridge.addLog("Injecting HTTP Payload (${formattedPayload.length} bytes)...")
-                    val out: OutputStream = proxySock.getOutputStream()
-                    out.write(formattedPayload.toByteArray())
-                    out.flush()
-                    val inp: InputStream = proxySock.getInputStream()
-                    val buf = ByteArray(1024)
-                    val read = inp.read(buf)
-                    if (read > 0) {
-                        val firstLine = String(buf, 0, read).lineSequence().firstOrNull() ?: ""
-                        VpnStateBridge.addLog("Proxy response: $firstLine")
-                    }
-                }
-                preSocket = proxySock
-            }
+            VpnStateBridge.addLog("Connecting to SSH server $cleanHost:$port...")
 
             sshClient = SSHClient().apply {
                 addHostKeyVerifier(PromiscuousVerifier())
-                connectTimeout = 12000
+                connectTimeout = 10000
                 timeout = 15000
             }
 
-            VpnStateBridge.addLog("Opening SSH transport to $cleanHost:$port...")
             sshClient?.connect(cleanHost, port)
 
             VpnStateBridge.updateState("CONNECTING", "Authenticating $cleanUser...")
@@ -105,12 +62,12 @@ object SshEngine {
 
             if (sshClient?.isAuthenticated == true) {
                 isRunning = true
-                VpnStateBridge.addLog("SSH Authentication SUCCESSFUL for user '$cleanUser'.")
-                VpnStateBridge.addLog("Starting local port forwarder on 127.0.0.1:$localPort...")
-                startLocalForwarding(localPort)
+                VpnStateBridge.addLog("SSH Authentication SUCCESSFUL for '$cleanUser'.")
+                VpnStateBridge.addLog("Starting local SOCKS5 server on 127.0.0.1:$localPort...")
+                startLocalSocks5Server(localPort)
                 true
             } else {
-                VpnStateBridge.addLog("SSH Authentication FAILED: Invalid username or password.")
+                VpnStateBridge.addLog("SSH Auth Failed: Invalid username or password.")
                 stopSshTunnel()
                 false
             }
@@ -121,7 +78,7 @@ object SshEngine {
                 msg.contains("Auth fail", ignoreCase = true) ||
                 msg.contains("UserAuthException", ignoreCase = true)
             ) {
-                VpnStateBridge.addLog("SSH Login Rejected: Wrong username or password!")
+                VpnStateBridge.addLog("SSH Auth Failed: Wrong username or password!")
             } else {
                 VpnStateBridge.addLog("SSH Connection Failed: $msg")
             }
@@ -130,36 +87,117 @@ object SshEngine {
         }
     }
 
-    private fun startLocalForwarding(localPort: Int) {
-        thread(start = true, name = "SSH-Local-Forward") {
+    private fun startLocalSocks5Server(localPort: Int) {
+        thread(start = true, name = "SSH-SOCKS5-Server") {
             try {
                 localServer = ServerSocket()
                 localServer?.reuseAddress = true
                 localServer?.bind(InetSocketAddress("127.0.0.1", localPort))
-                val params = Parameters("127.0.0.1", localPort, "127.0.0.1", 80)
-                val forwarder = sshClient?.newLocalPortForwarder(params, localServer)
-                forwarder?.listen()
+                while (isRunning) {
+                    val clientSocket = localServer?.accept() ?: break
+                    thread(start = true) {
+                        handleSocks5Client(clientSocket)
+                    }
+                }
             } catch (t: Throwable) {
                 if (isRunning) {
-                    Log.e(TAG, "Port forwarder dropped: ${t.message}")
-                    VpnStateBridge.addLog("SSH forwarder stopped: ${t.message}")
+                    VpnStateBridge.addLog("Local SOCKS5 server stopped: ${t.message}")
                 }
             }
         }
     }
 
+    private fun handleSocks5Client(client: Socket) {
+        try {
+            val ins = client.getInputStream()
+            val outs = client.getOutputStream()
+
+            // SOCKS5 Greeting
+            val ver = ins.read()
+            if (ver != 5) {
+                client.close()
+                return
+            }
+            val nMethods = ins.read()
+            val methods = ByteArray(nMethods)
+            ins.read(methods)
+            outs.write(byteArrayOf(0x05, 0x00))
+            outs.flush()
+
+            // SOCKS5 Request
+            val reqVer = ins.read()
+            val cmd = ins.read()
+            ins.read() // RSV
+            val atyp = ins.read()
+            if (reqVer != 5 || cmd != 1) {
+                client.close()
+                return
+            }
+
+            val targetHost = when (atyp) {
+                1 -> { // IPv4
+                    val addr = ByteArray(4)
+                    ins.read(addr)
+                    InetAddress.getByAddress(addr).hostAddress ?: ""
+                }
+                3 -> { // Domain
+                    val len = ins.read()
+                    val domain = ByteArray(len)
+                    ins.read(domain)
+                    String(domain)
+                }
+                4 -> { // IPv6
+                    val addr = ByteArray(16)
+                    ins.read(addr)
+                    InetAddress.getByAddress(addr).hostAddress ?: ""
+                }
+                else -> ""
+            }
+            val portHigh = ins.read()
+            val portLow = ins.read()
+            val targetPort = (portHigh shl 8) or portLow
+
+            val channel = sshClient?.newDirectTCPIPChannel(
+                Parameters("127.0.0.1", 0, targetHost, targetPort),
+                null
+            )
+            if (channel == null) {
+                client.close()
+                return
+            }
+
+            // Reply SOCKS5 Success
+            outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+            outs.flush()
+
+            val sshIn = channel.inputStream
+            val sshOut = channel.outputStream
+
+            val t1 = thread(start = true) {
+                try {
+                    ins.copyTo(sshOut)
+                } catch (_: Throwable) {
+                } finally {
+                    try { channel.close() } catch (_: Throwable) {}
+                }
+            }
+            try {
+                sshIn.copyTo(outs)
+            } catch (_: Throwable) {
+            } finally {
+                try { client.close() } catch (_: Throwable) {}
+                try { channel.close() } catch (_: Throwable) {}
+            }
+            t1.join(200)
+        } catch (_: Throwable) {
+            try { client.close() } catch (_: Throwable) {}
+        }
+    }
+
     fun stopSshTunnel() {
         isRunning = false
-        try {
-            preSocket?.close()
-        } catch (_: Throwable) {}
-        preSocket = null
-
-        try {
-            localServer?.close()
-        } catch (_: Throwable) {}
+        try { localServer?.close() } catch (_: Throwable) {}
         localServer = null
-
         try {
             sshClient?.disconnect()
             sshClient?.close()
