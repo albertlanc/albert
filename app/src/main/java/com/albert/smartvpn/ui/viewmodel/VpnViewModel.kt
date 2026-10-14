@@ -9,7 +9,6 @@ import com.albert.smartvpn.utils.VpnConfigParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -17,17 +16,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = AppDatabase.getDatabase(application).profileDao()
 
     val profiles: StateFlow<List<VpnProfile>> = dao.getAllProfiles()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _isConnected = MutableStateFlow(false)
-    val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+    val isConnected: StateFlow<Boolean> = _isConnected
 
     private val _logs = MutableStateFlow<List<String>>(listOf("Core engine initialized. Ready."))
-    val logs: StateFlow<List<String>> = _logs.asStateFlow()
+    val logs: StateFlow<List<String>> = _logs
 
     fun setConnectedState(connected: Boolean) {
         _isConnected.value = connected
-        addLog(if (connected) "VPN service connected." else "VPN service disconnected.")
+        addLog(if (connected) "Tunnel established." else "Tunnel disconnected.")
     }
 
     fun addLog(message: String) {
@@ -37,28 +36,41 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun selectProfile(id: Int) {
         viewModelScope.launch {
             dao.selectProfile(id)
-            addLog("Active configuration changed (ID: $id)")
+            addLog("Selected profile ID: $id")
         }
     }
 
     fun deleteProfile(profile: VpnProfile) {
         viewModelScope.launch {
             dao.deleteProfile(profile)
-            addLog("Removed configuration: ${profile.name}")
+            addLog("Deleted profile: ${profile.name}")
         }
     }
 
-    fun importFromClipboard(clipboardContent: String): Boolean {
-        val parsedProfile = VpnConfigParser.parseUri(clipboardContent.trim())
-        return if (parsedProfile != null) {
-            viewModelScope.launch {
-                dao.insertProfile(parsedProfile)
-                addLog("Imported profile: ${parsedProfile.name} (${parsedProfile.protocol})")
+    fun saveManualProfile(profile: VpnProfile) {
+        viewModelScope.launch {
+            if (profile.id != 0) {
+                dao.deleteProfile(profile)
             }
-            true
-        } else {
-            addLog("Failed to parse link: Invalid format.")
-            false
+            dao.insertProfile(profile)
+            addLog("Saved config: ${profile.name} [${profile.protocol}]")
+        }
+    }
+
+    fun importFromClipboard(text: String) {
+        viewModelScope.launch {
+            val cleanText = text.trim()
+            if (cleanText.isEmpty()) {
+                addLog("Clipboard is empty.")
+                return@launch
+            }
+            val parsed = VpnConfigParser.parseUri(cleanText)
+            if (parsed != null) {
+                dao.insertProfile(parsed)
+                addLog("Imported profile: ${parsed.name} (${parsed.protocol})")
+            } else {
+                addLog("Failed to parse link: Invalid format.")
+            }
         }
     }
 }
