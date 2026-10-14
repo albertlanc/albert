@@ -1,8 +1,11 @@
 package com.albert.smartvpn.engine
 
 import android.util.Log
+import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.net.InetSocketAddress
+import java.net.Socket
 
 object XrayCore {
     private const val TAG = "XrayCore"
@@ -19,15 +22,15 @@ object XrayCore {
                     return method.invoke(null, requestJson) as? String
                 }
             } catch (_: Throwable) {
-                // Try next generated gomobile class name
+                // Try next candidate
             }
         }
-        Log.e(TAG, "Could not locate LibXray.invoke in libXray.aar")
         return null
     }
 
     fun RunXrayFromJSON(configJson: String): Boolean {
         return try {
+            VpnStateBridge.addLog("Starting Xray-core engine...")
             val payload = JsonObject().apply {
                 addProperty("xrayJson", configJson)
             }
@@ -37,12 +40,38 @@ object XrayCore {
                 add("payload", payload)
             }
 
-            val responseStr = invokeLibXray(request.toString()) ?: return false
-            Log.d(TAG, "runXray response: $responseStr")
-            val responseJson = JsonParser.parseString(responseStr).asJsonObject
-            responseJson.get("success")?.asBoolean ?: false
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to start Xray: ${e.message}", e)
+            val responseStr = invokeLibXray(request.toString())
+            if (responseStr != null) {
+                val responseJson = JsonParser.parseString(responseStr).asJsonObject
+                val ok = responseJson.get("success")?.asBoolean ?: false
+                if (ok) {
+                    VpnStateBridge.addLog("Xray-core engine started successfully.")
+                    return true
+                } else {
+                    VpnStateBridge.addLog("Xray-core rejected config: $responseStr")
+                    return false
+                }
+            } else {
+                VpnStateBridge.addLog("Error: libXray native bridge unavailable.")
+                false
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to start Xray: ${t.message}", t)
+            VpnStateBridge.addLog("Xray error: ${t.message}")
+            false
+        }
+    }
+
+    fun verifyServerReachable(host: String, port: Int): Boolean {
+        return try {
+            VpnStateBridge.addLog("Probing remote endpoint $host:$port...")
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host.trim(), port), 8000)
+            }
+            VpnStateBridge.addLog("Endpoint $host:$port is reachable.")
+            true
+        } catch (t: Throwable) {
+            VpnStateBridge.addLog("Endpoint unreachable ($host:$port): ${t.message}")
             false
         }
     }
@@ -53,24 +82,12 @@ object XrayCore {
                 addProperty("apiVersion", 3)
                 addProperty("method", "stopXray")
             }
-            val responseStr = invokeLibXray(request.toString()) ?: return false
-            Log.d(TAG, "stopXray response: $responseStr")
+            invokeLibXray(request.toString())
             true
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to stop Xray: ${e.message}", e)
+        } catch (_: Throwable) {
             false
         }
     }
 
-    fun XrayVersion(): String {
-        return try {
-            val request = JsonObject().apply {
-                addProperty("apiVersion", 3)
-                addProperty("method", "xrayVersion")
-            }
-            invokeLibXray(request.toString()) ?: "Xray-core"
-        } catch (e: Throwable) {
-            "Unknown"
-        }
-    }
+    fun XrayVersion(): String = "Xray-core"
 }
