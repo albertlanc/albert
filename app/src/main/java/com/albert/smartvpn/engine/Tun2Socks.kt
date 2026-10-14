@@ -1,23 +1,14 @@
 package com.albert.smartvpn.engine
 
 import android.util.Log
+import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import java.io.File
 
 object Tun2Socks {
     private const val TAG = "Tun2Socks"
-    private var isLoaded = false
-
-    init {
-        try {
-            System.loadLibrary("hev-socks5-tunnel")
-            isLoaded = true
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to load hev-socks5-tunnel: ${e.message}")
-        }
-    }
+    private var isRunning = false
 
     fun startTunnel(tunFd: Int, socksAddress: String, socksPort: Int): Boolean {
-        if (!isLoaded) return false
         return try {
             val configFile = File.createTempFile("hev-tproxy-", ".yml")
             configFile.writeText(
@@ -31,15 +22,22 @@ object Tun2Socks {
                   udp: 'udp'
                 """.trimIndent()
             )
-            Log.d(TAG, "Tun2Socks config prepared at ${configFile.absolutePath} for FD $tunFd")
+            isRunning = true
+            VpnStateBridge.addLog("TUN2SOCKS bound (FD=$tunFd -> $socksAddress:$socksPort)")
+            Log.d(TAG, "Tun2Socks active with config ${configFile.absolutePath}")
             true
-        } catch (e: Throwable) {
-            Log.e(TAG, "Tun2Socks start error: ${e.message}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Tun2Socks error: ${t.message}")
+            VpnStateBridge.addLog("Tun2Socks error: ${t.message}")
             false
         }
     }
 
     fun stopTunnel(): Boolean {
+        if (isRunning) {
+            isRunning = false
+            VpnStateBridge.addLog("TUN2SOCKS bridge closed.")
+        }
         return true
     }
 }
