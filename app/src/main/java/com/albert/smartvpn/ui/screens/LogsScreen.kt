@@ -62,7 +62,7 @@ fun LogsScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF0A0D12))
+                    .background(Color(0xFF050A18))
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
@@ -77,7 +77,7 @@ fun LogsScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF0A0D12))
+                    .background(Color(0xFF050A18))
                     .padding(padding)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -86,12 +86,13 @@ fun LogsScreen(
                     val logColor = when {
                         logLine.contains("Failed", ignoreCase = true) ||
                             logLine.contains("Error", ignoreCase = true) ||
-                            logLine.contains("Rejected", ignoreCase = true) -> Color(0xFFFF5252)
+                            logLine.contains("Rejected", ignoreCase = true) ||
+                            logLine.contains("Blocked", ignoreCase = true) -> Color(0xFFFF5252)
                         logLine.contains("SUCCESS", ignoreCase = true) ||
                             logLine.contains("CONNECTED!", ignoreCase = true) -> Color(0xFF00E676)
                         logLine.contains("Connecting", ignoreCase = true) ||
                             logLine.contains("Authenticating", ignoreCase = true) -> Color(0xFFFFAB00)
-                        else -> Color(0xFF8B949E)
+                        else -> Color(0xFFB0C4DE)
                     }
                     Text(
                         text = logLine,
