@@ -16,7 +16,7 @@ import java.util.Date
 import java.util.Locale
 
 object VpnStateBridge {
-    private val _connectionState = MutableStateFlow("DISCONNECTED") // DISCONNECTED, CONNECTING, CONNECTED
+    private val _connectionState = MutableStateFlow("DISCONNECTED")
     val connectionState: StateFlow<String> = _connectionState
 
     private val _isConnected = MutableStateFlow(false)
@@ -25,7 +25,9 @@ object VpnStateBridge {
     private val _statusMessage = MutableStateFlow("Idle")
     val statusMessage: StateFlow<String> = _statusMessage
 
-    private val _logs = MutableStateFlow<List<String>>(listOf("[System] Core engine initialized. Ready."))
+    private val _logs = MutableStateFlow<List<String>>(
+        listOf("[v2.1] Smart VPN Engine Ready. Waiting for connection...")
+    )
     val logs: StateFlow<List<String>> = _logs
 
     fun updateState(state: String, status: String = state) {
@@ -37,10 +39,6 @@ object VpnStateBridge {
     fun addLog(message: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         _logs.value = (_logs.value + "[$time] $message").takeLast(300)
-    }
-
-    fun clearLogs() {
-        _logs.value = emptyList()
     }
 }
 
