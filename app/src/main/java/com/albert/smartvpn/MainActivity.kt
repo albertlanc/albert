@@ -17,9 +17,12 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -89,10 +92,17 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SmartVpnTheme {
-                var showSplash by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                    delay(4500L)
-                    showSplash = false
+                // Only show splash screen on initial cold launch when not already connected
+                var showSplash by remember {
+                    mutableStateOf(!VpnStateBridge.hasShownSplash && !VpnStateBridge.isConnected.value)
+                }
+
+                LaunchedEffect(showSplash) {
+                    if (showSplash) {
+                        delay(3200L)
+                        VpnStateBridge.hasShownSplash = true
+                        showSplash = false
+                    }
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -104,7 +114,10 @@ class MainActivity : ComponentActivity() {
                         exit = fadeOut()
                     ) {
                         QuantumCyberSplashScreen(
-                            onEnterNow = { showSplash = false }
+                            onEnterNow = {
+                                VpnStateBridge.hasShownSplash = true
+                                showSplash = false
+                            }
                         )
                     }
                 }
@@ -112,7 +125,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalMaterial3Api::class)
+    @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
     @Composable
     private fun MainDashboardContent() {
         val context = LocalContext.current
@@ -120,7 +133,7 @@ class MainActivity : ComponentActivity() {
         val scope = rememberCoroutineScope()
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
-        var selectedTab by remember { mutableIntStateOf(0) }
+        val pagerState = rememberPagerState(initialPage = 0, pageCount = { 4 })
         var activeToolPage by remember { mutableStateOf("PING") }
         var showThemeMenu by remember { mutableStateOf(false) }
 
@@ -144,7 +157,7 @@ class MainActivity : ComponentActivity() {
                 ModalDrawerSheet(
                     drawerContainerColor = MaterialTheme.colorScheme.surface,
                     drawerContentColor = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.width(315.dp)
+                    modifier = Modifier.width(305.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -167,14 +180,14 @@ class MainActivity : ComponentActivity() {
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = "SSH • SlowDNS • Xray • WG • HY2",
+                                    text = "SSH • 15x SlowDNS • Xray • WG",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
 
-                        // Device ID Box
+                        // Hardware Device ID Box
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(12.dp),
@@ -182,7 +195,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(
-                                    text = "DEVICE ID (FOR CONFIG LOCK)",
+                                    text = "HARDWARE ID (FOR CONFIG LOCK)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold
@@ -203,7 +216,7 @@ class MainActivity : ComponentActivity() {
                                     IconButton(
                                         onClick = {
                                             clipboardManager.setText(AnnotatedString(deviceId))
-                                            viewModel.addLog("Copied Device ID: $deviceId")
+                                            viewModel.addLog("Copied Hardware ID: $deviceId")
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
@@ -218,105 +231,87 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // Theme Switcher Section inside Drawer
-                        Text(
-                            text = "APPEARANCE & DAY/NIGHT THEME",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(top = 8.dp, start = 4.dp)
-                        )
-                        themeOptions.forEach { (key, label) ->
-                            NavigationDrawerItem(
-                                label = { Text(label, fontSize = 13.sp) },
-                                selected = currentThemeMode == key,
-                                icon = {
-                                    Icon(
-                                        imageVector = when (key) {
-                                            "AUTO" -> Icons.Default.BrightnessAuto
-                                            "SOLAR_LIGHT" -> Icons.Default.WbSunny
-                                            "ROYAL_GOLD" -> Icons.Default.AutoAwesome
-                                            else -> Icons.Default.DarkMode
-                                        },
-                                        contentDescription = null
-                                    )
-                                },
-                                onClick = {
-                                    VpnStateBridge.themeMode.value = key
-                                    viewModel.addLog("Switched theme to: $label")
-                                }
-                            )
-                        }
-
-                        Divider(modifier = Modifier.padding(vertical = 6.dp))
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
 
                         NavigationDrawerItem(
                             label = { Text("Ping / Host Checker") },
-                            selected = selectedTab == 3 && activeToolPage == "PING",
+                            selected = pagerState.currentPage == 3 && activeToolPage == "PING",
                             icon = { Icon(Icons.Default.NetworkCheck, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "PING"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
                             }
                         )
 
                         NavigationDrawerItem(
                             label = { Text("My IP & GeoIP Lookup") },
-                            selected = selectedTab == 3 && activeToolPage == "GEOIP",
+                            selected = pagerState.currentPage == 3 && activeToolPage == "GEOIP",
                             icon = { Icon(Icons.Default.Public, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "GEOIP"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
+                            }
+                        )
+
+                        NavigationDrawerItem(
+                            label = { Text("Wi-Fi Hotshare (Share VPN)") },
+                            selected = pagerState.currentPage == 3 && activeToolPage == "HOTSHARE",
+                            icon = { Icon(Icons.Default.WifiTethering, contentDescription = null) },
+                            onClick = {
+                                activeToolPage = "HOTSHARE"
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
                             }
                         )
 
                         NavigationDrawerItem(
                             label = { Text("Advanced SSH Settings") },
-                            selected = selectedTab == 3 && activeToolPage == "SSH_SETTINGS",
+                            selected = pagerState.currentPage == 3 && activeToolPage == "SSH_SETTINGS",
                             icon = { Icon(Icons.Default.Tune, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "SSH_SETTINGS"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
                             }
                         )
 
                         NavigationDrawerItem(
                             label = { Text("HTTP/WS Payload Generator") },
-                            selected = selectedTab == 3 && activeToolPage == "PAYLOAD_GEN",
+                            selected = pagerState.currentPage == 3 && activeToolPage == "PAYLOAD_GEN",
                             icon = { Icon(Icons.Default.Code, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "PAYLOAD_GEN"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
                             }
                         )
 
                         NavigationDrawerItem(
                             label = { Text("SNI / Bug Host Hunter") },
-                            selected = selectedTab == 3 && activeToolPage == "SNI_HUNTER",
+                            selected = pagerState.currentPage == 3 && activeToolPage == "SNI_HUNTER",
                             icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
                             onClick = {
                                 activeToolPage = "SNI_HUNTER"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
+                                scope.launch {
+                                    drawerState.close()
+                                    pagerState.animateScrollToPage(3)
+                                }
                             }
                         )
 
-                        NavigationDrawerItem(
-                            label = { Text("Hotshare / Wi-Fi Tether") },
-                            selected = selectedTab == 3 && activeToolPage == "HOTSHARE",
-                            icon = { Icon(Icons.Default.WifiTethering, contentDescription = null) },
-                            onClick = {
-                                activeToolPage = "HOTSHARE"
-                                selectedTab = 3
-                                scope.launch { drawerState.close() }
-                            }
-                        )
-
-                        Divider(modifier = Modifier.padding(vertical = 6.dp))
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
 
                         NavigationDrawerItem(
                             label = { Text("Battery Keep-Alive (Anti-Kill)") },
@@ -376,6 +371,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         actions = {
+                            // Theme selector lives ONLY here on the top toggle bar
                             Box {
                                 IconButton(onClick = { showThemeMenu = true }) {
                                     Icon(
@@ -426,62 +422,66 @@ class MainActivity : ComponentActivity() {
                 bottomBar = {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                         NavigationBarItem(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
+                            selected = pagerState.currentPage == 0,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
                             icon = { Icon(Icons.Default.Home, contentDescription = null) },
                             label = { Text("Home") }
                         )
                         NavigationBarItem(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
+                            selected = pagerState.currentPage == 1,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             icon = { Icon(Icons.Default.List, contentDescription = null) },
                             label = { Text("Configs") }
                         )
                         NavigationBarItem(
-                            selected = selectedTab == 2,
-                            onClick = { selectedTab = 2 },
+                            selected = pagerState.currentPage == 2,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(2) } },
                             icon = { Icon(Icons.Default.Article, contentDescription = null) },
                             label = { Text("Logs") }
                         )
                         NavigationBarItem(
-                            selected = selectedTab == 3,
-                            onClick = { selectedTab = 3 },
+                            selected = pagerState.currentPage == 3,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(3) } },
                             icon = { Icon(Icons.Default.Build, contentDescription = null) },
                             label = { Text("Tools") }
                         )
                     }
                 }
             ) { innerPadding ->
-                when (selectedTab) {
-                    0 -> HomeScreen(
-                        isConnected = isConnected,
-                        activeProfile = activeProfile,
-                        onToggleConnection = {
-                            if (activeProfile == null) {
-                                viewModel.addLog("Cannot connect: Select or create a profile in Configs first.")
-                                selectedTab = 1
-                            } else {
-                                toggleVpn(connectionState != "DISCONNECTED")
+                // Swipeable HorizontalPager across all 4 menus
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) { page ->
+                    when (page) {
+                        0 -> HomeScreen(
+                            isConnected = isConnected,
+                            activeProfile = activeProfile,
+                            onToggleConnection = {
+                                if (activeProfile == null) {
+                                    viewModel.addLog("Cannot connect: Select or create a profile in Configs first.")
+                                    scope.launch { pagerState.animateScrollToPage(1) }
+                                } else {
+                                    toggleVpn(connectionState != "DISCONNECTED")
+                                }
                             }
-                        },
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                    1 -> ConfigsScreen(
-                        profiles = profiles,
-                        onSelectProfile = { viewModel.selectProfile(it.id) },
-                        onDeleteProfile = { viewModel.deleteProfile(it) },
-                        onImportClipboard = { viewModel.importFromClipboard(it) },
-                        onSaveProfile = { viewModel.saveManualProfile(it) },
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                    2 -> LogsScreen(
-                        logs = viewModel.logs.collectAsState().value,
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                    3 -> NetworkToolsScreen(
-                        initialToolPage = activeToolPage,
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                        )
+                        1 -> ConfigsScreen(
+                            profiles = profiles,
+                            onSelectProfile = { viewModel.selectProfile(it.id) },
+                            onDeleteProfile = { viewModel.deleteProfile(it) },
+                            onImportClipboard = { viewModel.importFromClipboard(it) },
+                            onSaveProfile = { viewModel.saveManualProfile(it) }
+                        )
+                        2 -> LogsScreen(
+                            logs = viewModel.logs.collectAsState().value
+                        )
+                        3 -> NetworkToolsScreen(
+                            initialToolPage = activeToolPage
+                        )
+                    }
                 }
             }
         }
@@ -511,7 +511,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(Unit) {
             for (i in 1..5) {
                 progressStep = i
-                delay(750L)
+                delay(580L)
             }
         }
 
@@ -620,7 +620,7 @@ class MainActivity : ComponentActivity() {
                             .border(1.dp, Color(0xFF00F0FF).copy(alpha = 0.35f), RoundedCornerShape(14.dp))
                     ) {
                         Text(
-                            text = "Engineered for unrestricted global connectivity, Smart VPN Ultra combines military-grade encryption with deep packet inspection (DPI) stealth bypass, custom SNI fronting, and hardware-locked configurations.",
+                            text = "Engineered for unrestricted global connectivity, Smart VPN Ultra combines military-grade encryption with 15x SlowDNS Turbo multiplexing, custom SNI fronting, and hardware-locked configurations.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFD6E4FF),
                             textAlign = TextAlign.Center,
@@ -638,8 +638,8 @@ class MainActivity : ComponentActivity() {
                     SplashFeatureRow(
                         icon = Icons.Default.Hub,
                         accent = Color(0xFF00F0FF),
-                        title = "8-in-1 Multi-Protocol Core",
-                        subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, SlowDNS (DNSTT), VLESS, VMess, Trojan, WireGuard & Hysteria2 QUIC."
+                        title = "8-in-1 Multi-Protocol Core + 15x SlowDNS Boost",
+                        subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, 15x Parallel SlowDNS, VLESS, VMess, Trojan, WireGuard & Hysteria2."
                     )
                     SplashFeatureRow(
                         icon = Icons.Default.Bolt,
@@ -650,14 +650,14 @@ class MainActivity : ComponentActivity() {
                     SplashFeatureRow(
                         icon = Icons.Default.Fingerprint,
                         accent = Color(0xFFFFC107),
-                        title = "Hardware Enclave & SQLCipher Security",
-                        subtitle = "AES-256 encrypted profile vault with Device ID (HWID) locking, creator passphrases, QR codes & .svpn sharing."
+                        title = "AES-256-GCM Hardware Enclave Security",
+                        subtitle = "Cryptographic Device ID (HWID) config binding—files, QR codes & Cloud tokens cannot be decrypted outside the locked phone."
                     )
                     SplashFeatureRow(
                         icon = Icons.Default.Radar,
                         accent = Color(0xFF7C4DFF),
-                        title = "Pro Network Diagnostics & Wi-Fi Hotshare",
-                        subtitle = "Built-in TCP/ICMP Ping tester, GeoIP inspector, SNI Bug Host scanner, Payload Generator & LAN Hotspot tethering."
+                        title = "One-Tap Wi-Fi Hotshare & Pro Diagnostics",
+                        subtitle = "Share your VPN over Wi-Fi Hotspot (HTTP & SOCKS5), plus built-in Ping tester, GeoIP lookup & SNI Bug Host scanner."
                     )
                 }
 
@@ -760,7 +760,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Ultra")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, SlowDNS, VLESS/VMess/Trojan, WireGuard & Hysteria2)."
+                    "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, 15x SlowDNS Boost, VLESS/VMess/Trojan, WireGuard & Hysteria2)."
                 )
             }
             startActivity(Intent.createChooser(sendIntent, "Share Smart VPN Ultra"))
