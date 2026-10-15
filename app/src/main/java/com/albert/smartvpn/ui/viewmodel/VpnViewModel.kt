@@ -5,17 +5,20 @@ import android.app.Application
 import android.content.Context
 import android.provider.Settings
 import android.util.Base64
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
 import com.albert.smartvpn.utils.VpnConfigParser
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
@@ -27,6 +30,7 @@ import javax.crypto.spec.SecretKeySpec
 
 object VpnStateBridge {
     @Volatile var hasShownSplash: Boolean = false
+    @Volatile private var cachedHwid: String? = null
 
     private val _connectionState = MutableStateFlow("DISCONNECTED")
     val connectionState: StateFlow<String> = _connectionState
@@ -41,11 +45,14 @@ object VpnStateBridge {
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
     private val _logs = MutableStateFlow<List<String>>(
-        listOf("[v5.0] Smart VPN Ultra Engine Ready.")
+        listOf("Ready.")
     )
     val logs: StateFlow<List<String>> = _logs
 
     val themeMode = MutableStateFlow("AUTO")
+
+    // SlowDNS Boost Toggle (Controlled from Home Screen before connecting)
+    val slowDnsBoostEnabled = MutableStateFlow(true)
 
     val sshCompression = MutableStateFlow(false)
     val autoReconnect = MutableStateFlow(true)
@@ -70,9 +77,18 @@ object VpnStateBridge {
         _statusMessage.value = status
     }
 
+    /**
+     * Writes detailed diagnostics ONLY to background Android Logcat,
+     * while keeping the UI Logs screen strictly clean and free of server hosts/credentials.
+     */
+    fun addDebugOnlyLog(message: String) {
+        Log.d("SmartVPN-Internal", message)
+    }
+
     fun addLog(message: String) {
+        Log.d("SmartVPN-Log", message)
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        _logs.value = (_logs.value + "[$time] $message").takeLast(300)
+        _logs.value = (_logs.value + "[$time] $message").takeLast(150)
     }
 
     fun clearLogs() {
@@ -81,6 +97,7 @@ object VpnStateBridge {
 
     @SuppressLint("HardwareIds")
     fun getDeviceHardwareId(context: Context): String {
+        cachedHwid?.let { return it }
         val rawId = try {
             Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTVPN"
         } catch (_: Throwable) {
@@ -88,7 +105,9 @@ object VpnStateBridge {
         }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
-        return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}"
+        val computed = "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}"
+        cachedHwid = computed
+        return computed
     }
 }
 
@@ -102,7 +121,7 @@ object ConfigCryptoHelper {
         val material = "$VAULT_MASTER_PEPPER|HWID:$normalizedHwid|PASS:$normalizedPass"
         var hash = material.toByteArray(Charsets.UTF_8)
         val md = MessageDigest.getInstance("SHA-256")
-        repeat(1000) {
+        repeat(64) {
             md.update(hash)
             md.update(VAULT_MASTER_PEPPER.toByteArray(Charsets.UTF_8))
             hash = md.digest()
@@ -198,10 +217,10 @@ object ConfigCryptoHelper {
 
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
-    private val dao = AppDatabase.getDatabase(application).profileDao()
+    private val dao by lazy { AppDatabase.getDatabase(appContext).profileDao() }
 
     val profiles: StateFlow<List<VpnProfile>> = dao.getAllProfiles()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val isConnected: StateFlow<Boolean> = VpnStateBridge.isConnected
     val connectionState: StateFlow<String> = VpnStateBridge.connectionState
@@ -221,32 +240,31 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectProfile(id: Int) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             dao.selectProfile(id)
-            VpnStateBridge.addLog("Selected profile ID: $id")
         }
     }
 
     fun deleteProfile(profile: VpnProfile) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             dao.deleteProfile(profile)
-            VpnStateBridge.addLog("Deleted profile: ${profile.name}")
+            VpnStateBridge.addLog("Configuration removed.")
         }
     }
 
     fun saveManualProfile(profile: VpnProfile) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             if (profile.id != 0) {
                 dao.deleteProfile(profile)
             }
             dao.clearSelection()
             dao.insertProfile(profile.copy(isSelected = true))
-            VpnStateBridge.addLog("Saved & selected config: ${profile.name} [${profile.protocol}]")
+            VpnStateBridge.addLog("Configuration saved.")
         }
     }
 
     fun importFromClipboard(text: String, passphrase: String = "") {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val cleanText = text.trim()
             if (cleanText.isEmpty()) {
                 VpnStateBridge.addLog("Clipboard is empty.")
@@ -255,26 +273,28 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if ((cleanText.startsWith("smartvpn://locked/") || cleanText.startsWith("smartvpn://hwidpass/")) &&
                 passphrase.isBlank()
             ) {
-                VpnStateBridge.addLog("Config is passphrase-locked! Tap the Cloud/Key icon in Configs to enter passphrase.")
+                VpnStateBridge.addLog("Passphrase required to unlock configuration.")
                 return@launch
             }
 
             val myDeviceId = VpnStateBridge.getDeviceHardwareId(appContext)
-            val parsed = ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myDeviceId)
-                ?: VpnConfigParser.parseUri(cleanText)
+            val parsed = withContext(Dispatchers.Default) {
+                ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myDeviceId)
+                    ?: VpnConfigParser.parseUri(cleanText)
+            }
 
             if (parsed != null) {
                 if (parsed.lockedDeviceId.isNotBlank() &&
                     !parsed.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                 ) {
-                    VpnStateBridge.addLog("HWID Security Rejected! Config is locked to another Device ID.")
+                    VpnStateBridge.addLog("HWID Lock Rejected: Unauthorized device.")
                     return@launch
                 }
                 dao.clearSelection()
                 dao.insertProfile(parsed.copy(isSelected = true))
-                VpnStateBridge.addLog("Imported & selected profile: ${parsed.name} (${parsed.protocol})")
+                VpnStateBridge.addLog("Configuration imported: ${parsed.name}")
             } else {
-                VpnStateBridge.addLog("Import Rejected: Wrong Hardware Device ID ($myDeviceId), wrong passphrase, or invalid link.")
+                VpnStateBridge.addLog("Import rejected: Invalid Hardware ID or passphrase.")
             }
         }
     }
