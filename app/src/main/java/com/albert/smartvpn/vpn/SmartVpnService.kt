@@ -69,18 +69,12 @@ class SmartVpnService : VpnService() {
         val notification = buildNotification(title, text)
         try {
             if (Build.VERSION.SDK_INT >= 34) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (_: Throwable) {
-            try {
-                startForeground(NOTIFICATION_ID, notification)
-            } catch (_: Throwable) {}
+            try { startForeground(NOTIFICATION_ID, notification) } catch (_: Throwable) {}
         }
     }
 
@@ -127,21 +121,16 @@ class SmartVpnService : VpnService() {
                             pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
                             localPort = slowDnsPort
                         )
-                        if (!dnsStarted) {
-                            false
-                        } else {
-                            SshEngine.startSshTunnel(
-                                protocolMode = "SLOWDNS",
-                                host = "127.0.0.1",
-                                port = slowDnsPort,
-                                user = profile.sshUser.ifBlank { profile.uuid },
-                                pass = profile.sshPass,
-                                localPort = localSocksPort,
-                                isSlowDns = true
-                            )
-                        }
+                        if (!dnsStarted) false else SshEngine.startSshTunnel(
+                            protocolMode = "SLOWDNS",
+                            host = "127.0.0.1",
+                            port = slowDnsPort,
+                            user = profile.sshUser.ifBlank { profile.uuid },
+                            pass = profile.sshPass,
+                            localPort = localSocksPort,
+                            isSlowDns = true
+                        )
                     }
-
                     proto.contains("SSH") -> {
                         SshEngine.startSshTunnel(
                             protocolMode = proto,
@@ -157,38 +146,27 @@ class SmartVpnService : VpnService() {
                             isSlowDns = false
                         )
                     }
-
                     proto == "HYSTERIA2" -> {
                         VpnStateBridge.addLog("Connecting...")
-                        Hysteria2Engine.startHysteria2(
-                            context = applicationContext,
-                            profile = profile,
-                            localSocksPort = localSocksPort
-                        )
+                        Hysteria2Engine.startHysteria2(applicationContext, profile, localSocksPort)
                     }
-
                     proto == "WIREGUARD" -> {
                         if (profile.wgPrivateKey.isBlank() || profile.wgPublicKey.isBlank()) {
                             VpnStateBridge.addLog("Connection failed.")
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting...")
-                            val wgJson = buildWireGuardXrayJson(profile, localSocksPort)
-                            XrayCore.RunXrayFromJSON(wgJson)
+                            XrayCore.RunXrayFromJSON(buildWireGuardXrayJson(profile, localSocksPort))
                         }
                     }
-
                     else -> {
-                        if (profile.uuid.isBlank()) {
-                            VpnStateBridge.addLog("Connection failed.")
+                        if (profile.uuid.isBlank() || !XrayCore.verifyServerReachable(profile.server, profile.port)) {
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting...")
                             val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
                             val ok = XrayCore.RunXrayFromJSON(configJson)
-                            if (ok) {
-                                VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
-                            }
+                            if (ok) VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
                             ok
                         }
                     }
@@ -215,9 +193,7 @@ class SmartVpnService : VpnService() {
                     .addDnsServer(secondaryDns)
                     .addRoute("0.0.0.0", 0)
 
-                try {
-                    builder.addDisallowedApplication(packageName)
-                } catch (_: Throwable) {}
+                try { builder.addDisallowedApplication(packageName) } catch (_: Throwable) {}
 
                 vpnInterface = builder.establish()
                 val fd = vpnInterface?.fd
@@ -229,14 +205,9 @@ class SmartVpnService : VpnService() {
                 }
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
-
                 VpnStateBridge.updateState("CONNECTED", "Connected")
                 VpnStateBridge.addLog("Connected.")
-
-                promoteForeground(
-                    "Smart VPN Ultra • Connected",
-                    "Tunnel Active (${profile.name})"
-                )
+                promoteForeground("Smart VPN Ultra • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.addLog("Disconnected.")
@@ -253,12 +224,11 @@ class SmartVpnService : VpnService() {
         val wsPath = profile.path.trim().ifBlank { "/" }
         val networkType = profile.network.trim().lowercase().ifBlank { "ws" }
 
-        val isReality = profile.security.equals("reality", ignoreCase = true) || profile.pbk.isNotBlank()
+        val isReality = profile.security.equals("reality", true) || profile.pbk.isNotBlank()
         val isTls = when {
             isReality -> false
-            profile.port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095) &&
-                !profile.security.equals("tls", ignoreCase = true) -> false
-            profile.security.equals("none", ignoreCase = true) -> false
+            profile.port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095) && !profile.security.equals("tls", true) -> false
+            profile.security.equals("none", true) -> false
             else -> true
         }
         val securityMode = when {
@@ -268,99 +238,37 @@ class SmartVpnService : VpnService() {
         }
 
         val (outboundAddress, outboundPort) = if (protocolLower == "vless" && securityMode == "none") {
-            val relayPort = XrayCore.startLocalPort80Relay(serverHost, profile.port)
-            Pair("127.0.0.1", relayPort)
+            Pair("127.0.0.1", XrayCore.startLocalPort80Relay(serverHost, profile.port))
         } else {
             Pair(serverHost, profile.port)
         }
 
-        val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") {
-            ", \"flow\": \"${profile.flow.trim()}\""
-        } else {
-            ""
-        }
-
+        val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") ", \"flow\": \"${profile.flow.trim()}\"" else ""
         val outboundSettings = when (protocolLower) {
             "trojan" -> "\"servers\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"password\": \"${profile.uuid.trim()}\"}]"
             "vmess" -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"alterId\": 0, \"security\": \"auto\"}]}]"
             else -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"encryption\": \"none\"$flowField}]}]"
         }
 
-        val verifyNames = if (!sniHost.equals(serverHost, ignoreCase = true)) {
-            "$sniHost,$serverHost"
-        } else {
-            sniHost
-        }
-
+        val verifyNames = if (!sniHost.equals(serverHost, true)) "$sniHost,$serverHost" else sniHost
         val securityBlock = when {
             isReality -> "\"realitySettings\": {\"serverName\": \"$sniHost\", \"fingerprint\": \"chrome\", \"publicKey\": \"${profile.pbk.trim()}\", \"shortId\": \"${profile.sid.trim()}\"},"
             isTls -> "\"tlsSettings\": {\"serverName\": \"$sniHost\", \"verifyPeerCertByName\": \"$verifyNames\", \"alpn\": [\"http/1.1\"]},"
             else -> ""
         }
-
         val transportBlock = when (networkType) {
             "grpc" -> "\"grpcSettings\": {\"serviceName\": \"${wsPath.removePrefix("/")}\"}"
             "tcp" -> "\"tcpSettings\": {}"
             else -> "\"wsSettings\": {\"path\": \"$wsPath\", \"host\": \"$sniHost\"}"
         }
 
-        return """
-        {
-          "log": { "loglevel": "warning" },
-          "inbounds": [{
-            "tag": "socks-in",
-            "port": $socksPort,
-            "listen": "127.0.0.1",
-            "protocol": "socks",
-            "settings": { "auth": "noauth", "udp": true }
-          }],
-          "outbounds": [{
-            "tag": "proxy",
-            "protocol": "$protocolLower",
-            "settings": { $outboundSettings },
-            "streamSettings": {
-              "network": "$networkType",
-              "security": "$securityMode",
-              $securityBlock
-              $transportBlock
-            }
-          }]
-        }
-        """.trimIndent()
+        return """{"log":{"loglevel":"warning"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock}}]}"""
     }
 
     private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
         val cleanAddr = profile.wgAddress.trim().ifBlank { "10.0.0.2/32" }
-        val pskField = if (profile.wgPresharedKey.isNotBlank()) {
-            ", \"preSharedKey\": \"${profile.wgPresharedKey.trim()}\""
-        } else {
-            ""
-        }
-        return """
-        {
-          "log": { "loglevel": "warning" },
-          "inbounds": [{
-            "tag": "socks-in",
-            "port": $socksPort,
-            "listen": "127.0.0.1",
-            "protocol": "socks",
-            "settings": { "auth": "noauth", "udp": true }
-          }],
-          "outbounds": [{
-            "tag": "proxy",
-            "protocol": "wireguard",
-            "settings": {
-              "secretKey": "${profile.wgPrivateKey.trim()}",
-              "address": ["$cleanAddr"],
-              "peers": [{
-                "publicKey": "${profile.wgPublicKey.trim()}",
-                "endpoint": "${profile.server.trim()}:${profile.port}"$pskField
-              }],
-              "mtu": ${profile.wgMtu.coerceIn(1280, 1500)}
-            }
-          }]
-        }
-        """.trimIndent()
+        val pskField = if (profile.wgPresharedKey.isNotBlank()) ", \"preSharedKey\": \"${profile.wgPresharedKey.trim()}\"" else ""
+        return """{"log":{"loglevel":"warning"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"wireguard","settings":{"secretKey":"${profile.wgPrivateKey.trim()}","address":["$cleanAddr"],"peers":[{"publicKey":"${profile.wgPublicKey.trim()}","endpoint":"${profile.server.trim()}:${profile.port}"$pskField}],"mtu":${profile.wgMtu.coerceIn(1280, 1500)}}}]}"""
     }
 
     private fun stopVpnPipeline(resetStatus: Boolean) {
@@ -378,12 +286,9 @@ class SmartVpnService : VpnService() {
                     VpnStateBridge.updateState("DISCONNECTED", "Idle")
                     VpnStateBridge.addLog("Disconnected.")
                 }
-            } catch (t: Throwable) {
-                Log.e(TAG, "Error stopping VPN: ${t.message}")
+            } catch (_: Throwable) {
             } finally {
-                try {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } catch (_: Throwable) {}
+                try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Throwable) {}
                 stopSelf()
             }
         }
@@ -397,45 +302,31 @@ class SmartVpnService : VpnService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Smart VPN Connection Status",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Shows active Smart VPN key notification and connection status"
+            val channel = NotificationChannel(CHANNEL_ID, "Smart VPN Status", NotificationManager.IMPORTANCE_HIGH).apply {
                 setSound(null, null)
                 enableVibration(false)
-                setShowBadge(true)
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(title: String, contentText: String): Notification {
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val openIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val stopIntent = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, SmartVpnService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            this, 1, Intent(this, SmartVpnService::class.java).apply { action = ACTION_STOP }, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_vpn_key)
-            .setContentIntent(openAppIntent)
+            .setContentIntent(openIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 }
+// === END OF FILE ===
