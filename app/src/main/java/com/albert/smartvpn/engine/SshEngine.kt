@@ -1,7 +1,7 @@
 package com.albert.smartvpn.engine
 
 import android.os.Build
-import com.albert.smartvpn.data.VpnProfile
+import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
@@ -26,7 +26,6 @@ import java.security.Provider
 import java.security.SecureRandom
 import java.security.Security
 import java.security.cert.X509Certificate
-import java.util.concurrent.Callable
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -39,6 +38,7 @@ import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 object SshEngine {
+    private const val TAG = "SshEngine"
     private val sshPool = CopyOnWriteArrayList<SSHClient>()
     private val poolSelector = AtomicInteger(0)
     @Volatile private var isRunning = false
@@ -57,7 +57,7 @@ object SshEngine {
             Security.insertProviderAt(provider, 1)
             SecurityUtils.setRegisterBouncyCastle(false)
         } catch (t: Throwable) {
-            VpnStateBridge.addDebugOnlyLog("BC provider note: ${t.message}")
+            Log.d(TAG, "BC provider note: ${t.message}")
         }
     }
 
@@ -84,8 +84,8 @@ object SshEngine {
         config.cipherFactories = config.cipherFactories.sortedBy {
             when {
                 it.name.contains("aes128-ctr", ignoreCase = true) -> 0
-                it.name.contains("chacha20", ignoreCase = true) -> 1
-                it.name.contains("aes128-gcm", ignoreCase = true) -> 2
+                it.name.contains("aes128-gcm", ignoreCase = true) -> 1
+                it.name.contains("aes256-ctr", ignoreCase = true) -> 2
                 else -> 10
             }
         }
@@ -136,16 +136,15 @@ object SshEngine {
 
         val client = SSHClient(sshConfig).apply {
             addHostKeyVerifier(PromiscuousVerifier())
-            connectTimeout = if (isSlowDns) 35000 else 15000
+            connectTimeout = if (isSlowDns) 45000 else 15000
             timeout = 0
 
-            // Enable Zlib compression on SlowDNS links (compresses DNS traffic 2x-3x) or if user toggled it on
-            if (isSlowDns || VpnStateBridge.sshCompression.value) {
+            if (VpnStateBridge.sshCompression.value) {
                 try { useCompression() } catch (_: Throwable) {}
             }
 
-            connection.windowSize = if (isSlowDns) 2097152L else 8388608L
-            connection.maxPacketSize = if (isSlowDns) 32768 else 65536
+            connection.windowSize = 8388608L
+            connection.maxPacketSize = 65536
             val keepAliveSec = VpnStateBridge.pingIntervalSec.value.coerceIn(5, 120)
             connection.keepAlive.keepAliveInterval = keepAliveSec
 
@@ -173,186 +172,106 @@ object SshEngine {
         return if (client.isAuthenticated) client else null
     }
 
-    /**
-     * Connects every SlowDNS Node in the cluster to its own dedicated local dnstt port (7001, 7002...)
-     * and logs each connected clone by name on the Logs screen.
-     */
-    fun startSlowDnsSshCluster(
-        nodes: List<SlowDnsNode>,
-        localSocksPort: Int
+    fun startSshTunnel(
+        protocolMode: String = "SSH",
+        host: String,
+        port: Int,
+        user: String,
+        pass: String,
+        localPort: Int,
+        payloadTemplate: String = "",
+        sni: String = "",
+        proxyHost: String = "",
+        proxyPort: Int = 8080,
+        isSlowDns: Boolean = false
     ): Boolean {
         if (isRunning) stopSshTunnel()
-        if (nodes.isEmpty()) return false
 
-        isRunning = true
-        var sockServerStarted = false
+        val cleanHost = host.trim()
+        val cleanUser = user.trim()
+        val mode = protocolMode.uppercase()
 
-        val tasks = nodes.mapIndexed { idx, node ->
-            Callable {
-                // Stagger by 180ms per clone so remote sshd MaxStartups accepts all clones cleanly
-                if (idx > 0) Thread.sleep(idx * 180L)
-                if (!isRunning) return@Callable false
-
-                try {
-                    val client = createConnectedSshClient(
-                        mode = "SLOWDNS",
-                        cleanHost = "127.0.0.1",
-                        port = node.localPort,
-                        cleanUser = node.sshUser.trim(),
-                        pass = node.sshPass,
-                        payloadTemplate = "",
-                        sni = "",
-                        proxyHost = "",
-                        proxyPort = 8080,
-                        isSlowDns = true,
-                        emitUiLogs = (idx == 0)
-                    )
-                    if (client != null && isRunning) {
-                        sshPool.add(client)
-                        synchronized(this) {
-                            if (!sockServerStarted) {
-                                sockServerStarted = true
-                                startLocalSocks5Server("127.0.0.1", localSocksPort)
-                            }
-                        }
-                        VpnStateBridge.addLog("[Clone ${node.cloneIndex}/${node.totalClones}] ${node.profileName} connected.")
-                        VpnStateBridge.updateState(
-                            "CONNECTING",
-                            "Connected ${sshPool.size}/${node.totalClones} clones..."
-                        )
-                        true
-                    } else {
-                        client?.close()
-                        VpnStateBridge.addLog("[Clone ${node.cloneIndex}/${node.totalClones}] ${node.profileName} failed.")
-                        false
-                    }
-                } catch (_: Throwable) {
-                    VpnStateBridge.addLog("[Clone ${node.cloneIndex}/${node.totalClones}] ${node.profileName} timeout.")
-                    false
-                }
-            }
+        if (cleanHost.isEmpty() || cleanUser.isEmpty() || pass.isEmpty()) {
+            VpnStateBridge.addLog("Connection failed: Missing configuration details.")
+            return false
         }
 
         return try {
-            // Connect the first clone or wait until all clones finish authenticating
-            val futures = tasks.map { ioThreadPool.submit(it) }
-            var connectedCount = 0
-            for (f in futures) {
-                if (try { f.get() } catch (_: Throwable) { false }) {
-                    connectedCount++
-                }
-            }
+            VpnStateBridge.updateState("CONNECTING", "Connecting...")
+            VpnStateBridge.addLog("Connecting...")
+            Log.d(TAG, "Connecting [$mode] -> $cleanHost:$port")
 
-            if (connectedCount > 0) {
-                VpnStateBridge.addLog("Turbo Cluster Active: $connectedCount/${nodes.size} SlowDNS clone(s) bonded!")
-                true
-            } else {
-                stopSshTunnel()
-                false
-            }
-        } catch (_: Throwable) {
-            stopSshTunnel()
-            false
-        }
-    }
+            val primaryClient = createConnectedSshClient(
+                mode = mode,
+                cleanHost = cleanHost,
+                port = port,
+                cleanUser = cleanUser,
+                pass = pass,
+                payloadTemplate = payloadTemplate,
+                sni = sni,
+                proxyHost = proxyHost,
+                proxyPort = proxyPort,
+                isSlowDns = isSlowDns,
+                emitUiLogs = true
+            )
 
-    /**
-     * Connects all selected SSH / SSH+SSL / SSH+WS+SNI+Payload profiles (or 4x internal turbo clones)
-     * and logs each connected clone on the Logs screen.
-     */
-    fun startSshCluster(
-        profiles: List<VpnProfile>,
-        localPort: Int
-    ): Boolean {
-        if (isRunning) stopSshTunnel()
-        if (profiles.isEmpty()) return false
+            if (primaryClient != null) {
+                sshPool.add(primaryClient)
+                isRunning = true
 
-        // If user selected 1 SSH profile, automatically create 4 internal turbo clones for 50+ Mbps speed;
-        // if user selected multiple cloned profiles (e.g. Test, Test #2..#6), connect every selected profile!
-        val effectiveProfiles = if (profiles.size == 1) {
-            val base = profiles.first()
-            (1..4).map { idx ->
-                if (idx == 1) base else base.copy(name = "${base.name} (Turbo #$idx)")
-            }
-        } else {
-            profiles
-        }
+                startLocalSocks5Server("127.0.0.1", localPort)
 
-        val total = effectiveProfiles.size
-        isRunning = true
-        var sockServerStarted = false
-
-        VpnStateBridge.updateState("CONNECTING", "Connecting...")
-        VpnStateBridge.addLog("Connecting $total tunnel instance(s)...")
-
-        val tasks = effectiveProfiles.mapIndexed { idx, prof ->
-            Callable {
-                if (idx > 0) Thread.sleep(idx * 120L)
-                if (!isRunning) return@Callable false
-
-                val cleanHost = prof.server.trim()
-                val cleanUser = prof.sshUser.ifBlank { prof.uuid }.trim()
-                val pass = prof.sshPass
-                val mode = prof.protocol.uppercase()
-
-                if (cleanHost.isEmpty() || cleanUser.isEmpty() || pass.isEmpty()) {
-                    return@Callable false
+                val extraSessions = when {
+                    isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value -> 5
+                    !isSlowDns -> 3
+                    else -> 0
                 }
 
-                try {
-                    val client = createConnectedSshClient(
-                        mode = mode,
-                        cleanHost = cleanHost,
-                        port = prof.port,
-                        cleanUser = cleanUser,
-                        pass = pass,
-                        payloadTemplate = prof.payload,
-                        sni = prof.sni,
-                        proxyHost = prof.proxyHost,
-                        proxyPort = prof.proxyPort,
-                        isSlowDns = false,
-                        emitUiLogs = (idx == 0)
-                    )
-                    if (client != null && isRunning) {
-                        sshPool.add(client)
-                        synchronized(this) {
-                            if (!sockServerStarted) {
-                                sockServerStarted = true
-                                startLocalSocks5Server("127.0.0.1", localPort)
-                            }
+                if (extraSessions > 0) {
+                    for (i in 1..extraSessions) {
+                        ioThreadPool.execute {
+                            try {
+                                if (!isRunning) return@execute
+                                val workerClient = createConnectedSshClient(
+                                    mode = mode,
+                                    cleanHost = cleanHost,
+                                    port = port,
+                                    cleanUser = cleanUser,
+                                    pass = pass,
+                                    payloadTemplate = payloadTemplate,
+                                    sni = sni,
+                                    proxyHost = proxyHost,
+                                    proxyPort = proxyPort,
+                                    isSlowDns = isSlowDns,
+                                    emitUiLogs = false
+                                )
+                                if (workerClient != null && isRunning) {
+                                    sshPool.add(workerClient)
+                                    Log.d(TAG, "Parallel SSH Turbo session #${sshPool.size} online")
+                                } else {
+                                    workerClient?.close()
+                                }
+                            } catch (_: Throwable) {}
                         }
-                        VpnStateBridge.addLog("[Clone ${idx + 1}/$total] ${prof.name} connected.")
-                        true
-                    } else {
-                        client?.close()
-                        VpnStateBridge.addLog("[Clone ${idx + 1}/$total] ${prof.name} auth failed.")
-                        false
                     }
-                } catch (_: Throwable) {
-                    VpnStateBridge.addLog("[Clone ${idx + 1}/$total] ${prof.name} failed.")
-                    false
                 }
-            }
-        }
-
-        return try {
-            val futures = tasks.map { ioThreadPool.submit(it) }
-            var connectedCount = 0
-            for (f in futures) {
-                if (try { f.get() } catch (_: Throwable) { false }) {
-                    connectedCount++
-                }
-            }
-
-            if (connectedCount > 0) {
-                VpnStateBridge.addLog("Turbo Cluster Active: $connectedCount/$total clone(s) bonded!")
                 true
             } else {
                 VpnStateBridge.addLog("Authentication failed.")
                 stopSshTunnel()
                 false
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            Log.e(TAG, "SSH Error: ${t.message}", t)
+            val msg = t.message ?: ""
+            if (msg.contains("Exhausted available authentication", ignoreCase = true) ||
+                msg.contains("Auth fail", ignoreCase = true) ||
+                msg.contains("UserAuthException", ignoreCase = true)
+            ) {
+                VpnStateBridge.addLog("Authentication failed: Invalid username or password.")
+            } else {
+                VpnStateBridge.addLog("Connection failed.")
+            }
             stopSshTunnel()
             false
         }
