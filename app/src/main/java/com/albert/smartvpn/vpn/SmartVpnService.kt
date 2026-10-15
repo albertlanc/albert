@@ -43,6 +43,7 @@ class SmartVpnService : VpnService() {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Uncaught coroutine error", throwable)
+        VpnStateBridge.slowDnsBoostEnabled.value = false
         VpnStateBridge.addLog("Disconnected.")
         VpnStateBridge.updateState("DISCONNECTED", "Error")
         stopVpnPipeline(resetStatus = false)
@@ -110,13 +111,18 @@ class SmartVpnService : VpnService() {
                 val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
                 val proto = profile.protocol.uppercase()
 
+                // Auto-enable SlowDNS Boost ONLY when a SLOWDNS profile is connecting
+                VpnStateBridge.slowDnsBoostEnabled.value = (proto == "SLOWDNS")
+
                 val engineStarted = when {
                     proto == "SLOWDNS" -> {
                         val slowDnsPort = 7000
+                        // Allows SlowDNS to connect on ANY port specified in the profile
+                        val targetDnsPort = if (profile.port in 1..65535) profile.port else 53
                         val dnsStarted = SlowDnsEngine.startSlowDns(
                             context = applicationContext,
                             dnsServerIp = profile.slowDnsServerIp.ifBlank { "8.8.8.8" },
-                            dnsPort = 53,
+                            dnsPort = targetDnsPort,
                             nsDomain = profile.slowDnsDomain,
                             pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
                             localPort = slowDnsPort
@@ -173,6 +179,7 @@ class SmartVpnService : VpnService() {
                 }
 
                 if (!engineStarted) {
+                    VpnStateBridge.slowDnsBoostEnabled.value = false
                     VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -198,6 +205,7 @@ class SmartVpnService : VpnService() {
                 vpnInterface = builder.establish()
                 val fd = vpnInterface?.fd
                 if (fd == null) {
+                    VpnStateBridge.slowDnsBoostEnabled.value = false
                     VpnStateBridge.addLog("Disconnected.")
                     VpnStateBridge.updateState("DISCONNECTED", "TUN Error")
                     stopVpnPipeline(resetStatus = false)
@@ -205,11 +213,12 @@ class SmartVpnService : VpnService() {
                 }
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
-                VpnStateBridge.updateState("CONNECTED", "Connected")
-                VpnStateBridge.addLog("Connected.")
+                VpnStateBridge.updateState("CONNECTED", "Connected (${profile.protocol} + BBR)")
+                VpnStateBridge.addLog("Connected (BBR Speed Active).")
                 promoteForeground("Smart VPN Ultra • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
+                VpnStateBridge.slowDnsBoostEnabled.value = false
                 VpnStateBridge.addLog("Disconnected.")
                 VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
                 stopVpnPipeline(resetStatus = false)
@@ -246,7 +255,7 @@ class SmartVpnService : VpnService() {
         val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") ", \"flow\": \"${profile.flow.trim()}\"" else ""
         val outboundSettings = when (protocolLower) {
             "trojan" -> "\"servers\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"password\": \"${profile.uuid.trim()}\"}]"
-            "vmess" -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"alterId\": 0, \"security\": \"auto\"}]}]"
+            "vmess" -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"alterId\": 0, \"security\": \"zero\"}]}]"
             else -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"encryption\": \"none\"$flowField}]}]"
         }
 
@@ -262,17 +271,19 @@ class SmartVpnService : VpnService() {
             else -> "\"wsSettings\": {\"path\": \"$wsPath\", \"host\": \"$sniHost\"}"
         }
 
-        return """{"log":{"loglevel":"warning"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock}}]}"""
+        return """{"log":{"loglevel":"none"},"policy":{"levels":{"0":{"handshake":4,"connIdle":300,"uplinkOnly":1,"downlinkOnly":1,"bufferSize":10240}}},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}}]}"""
     }
 
     private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
         val cleanAddr = profile.wgAddress.trim().ifBlank { "10.0.0.2/32" }
         val pskField = if (profile.wgPresharedKey.isNotBlank()) ", \"preSharedKey\": \"${profile.wgPresharedKey.trim()}\"" else ""
-        return """{"log":{"loglevel":"warning"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"wireguard","settings":{"secretKey":"${profile.wgPrivateKey.trim()}","address":["$cleanAddr"],"peers":[{"publicKey":"${profile.wgPublicKey.trim()}","endpoint":"${profile.server.trim()}:${profile.port}"$pskField}],"mtu":${profile.wgMtu.coerceIn(1280, 1500)}}}]}"""
+        return """{"log":{"loglevel":"none"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"wireguard","settings":{"secretKey":"${profile.wgPrivateKey.trim()}","address":["$cleanAddr"],"peers":[{"publicKey":"${profile.wgPublicKey.trim()}","endpoint":"${profile.server.trim()}:${profile.port}"$pskField}],"mtu":${profile.wgMtu.coerceIn(1280, 1500)}}}]}"""
     }
 
     private fun stopVpnPipeline(resetStatus: Boolean) {
         activeConnectJob?.cancel()
+        VpnStateBridge.slowDnsBoostEnabled.value = false
+        VpnStateBridge.pingResultText.value = "Tap Ping to test active tunnel latency & speed"
         serviceScope.launch {
             try {
                 Tun2Socks.stopTunnel()
