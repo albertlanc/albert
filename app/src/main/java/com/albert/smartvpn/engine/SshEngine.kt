@@ -1,15 +1,12 @@
 package com.albert.smartvpn.engine
 
 import android.os.Build
-import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.SecurityUtils
 import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
-import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
@@ -22,7 +19,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketAddress
-import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.security.KeyPairGenerator
 import java.security.Provider
@@ -31,7 +27,6 @@ import java.security.Security
 import java.security.cert.X509Certificate
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 import javax.net.ssl.SNIHostName
@@ -42,13 +37,12 @@ import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 object SshEngine {
-    private const val TAG = "SshEngine"
-    private var sshClient: SSHClient? = null
-    private val boostSshPool = CopyOnWriteArrayList<SSHClient>()
-    private val poolIndex = AtomicInteger(0)
+    private val sshPool = CopyOnWriteArrayList<SSHClient>()
+    private val poolSelector = AtomicInteger(0)
     @Volatile private var isRunning = false
     private var localServer: ServerSocket? = null
-    private val activeUdpSockets = mutableListOf<DatagramSocket>()
+    private val activeBridges = CopyOnWriteArrayList<ServerSocket>()
+    private val activeUdpSockets = CopyOnWriteArrayList<DatagramSocket>()
     private val ioThreadPool = Executors.newCachedThreadPool()
 
     private val tlsPorts = setOf(443, 8443, 2053, 2083, 2087, 2096)
@@ -61,7 +55,7 @@ object SshEngine {
             Security.insertProviderAt(provider, 1)
             SecurityUtils.setRegisterBouncyCastle(false)
         } catch (t: Throwable) {
-            Log.w(TAG, "BC provider setup note: ${t.message}")
+            VpnStateBridge.addDebugOnlyLog("BC provider note: ${t.message}")
         }
     }
 
@@ -85,12 +79,12 @@ object SshEngine {
             }
         }
 
-        // Prioritize hardware-accelerated AES-128-CTR / ChaCha20 for 50+ Mbps throughput
+        // Prioritize fastest hardware-accelerated ciphers (AES-128-CTR / AES-128-GCM)
         config.cipherFactories = config.cipherFactories.sortedBy {
             when {
                 it.name.contains("aes128-ctr", ignoreCase = true) -> 0
                 it.name.contains("aes128-gcm", ignoreCase = true) -> 1
-                it.name.contains("chacha20", ignoreCase = true) -> 2
+                it.name.contains("aes256-ctr", ignoreCase = true) -> 2
                 else -> 10
             }
         }
@@ -123,6 +117,61 @@ object SshEngine {
         return sslContext.socketFactory
     }
 
+    private fun createConnectedSshClient(
+        mode: String,
+        cleanHost: String,
+        port: Int,
+        cleanUser: String,
+        pass: String,
+        payloadTemplate: String,
+        sni: String,
+        proxyHost: String,
+        proxyPort: Int,
+        isSlowDns: Boolean,
+        emitUiLogs: Boolean
+    ): SSHClient? {
+        val sshConfig = buildAndroidSafeSshConfig(isSlowDns)
+        val useCustomFactory = !isSlowDns && mode != "SSH"
+
+        val client = SSHClient(sshConfig).apply {
+            addHostKeyVerifier(PromiscuousVerifier())
+            connectTimeout = if (isSlowDns) 45000 else 15000
+            timeout = 0
+
+            if (VpnStateBridge.sshCompression.value) {
+                try { useCompression() } catch (_: Throwable) {}
+            }
+
+            // 8 MB Window & 64 KB Packet Size for 50+ Mbps High-Speed Streaming
+            connection.windowSize = 8388608L
+            connection.maxPacketSize = 65536
+            val keepAliveSec = VpnStateBridge.pingIntervalSec.value.coerceIn(5, 120)
+            connection.keepAlive.keepAliveInterval = keepAliveSec
+
+            if (useCustomFactory) {
+                socketFactory = createCustomTunnelSocketFactory(
+                    mode = mode,
+                    targetHost = cleanHost,
+                    targetPort = port,
+                    payloadTemplate = payloadTemplate,
+                    sni = sni.trim(),
+                    proxyHost = proxyHost.trim(),
+                    proxyPort = proxyPort,
+                    emitUiLogs = emitUiLogs
+                )
+            }
+        }
+
+        if (useCustomFactory) {
+            client.connect("127.0.0.1", port)
+        } else {
+            client.connect(cleanHost, port)
+        }
+
+        client.authPassword(cleanUser, pass)
+        return if (client.isAuthenticated) client else null
+    }
+
     fun startSshTunnel(
         protocolMode: String = "SSH",
         host: String,
@@ -143,131 +192,92 @@ object SshEngine {
         val mode = protocolMode.uppercase()
 
         if (cleanHost.isEmpty() || cleanUser.isEmpty() || pass.isEmpty()) {
-            VpnStateBridge.addLog("Disconnected: Missing credentials.")
+            VpnStateBridge.addLog("Connection failed: Missing configuration details.")
             return false
         }
 
         return try {
             VpnStateBridge.updateState("CONNECTING", "Connecting...")
             VpnStateBridge.addLog("Connecting...")
-            Log.d(TAG, "Connecting [$mode] -> $cleanHost:$port (User: $cleanUser)")
+            VpnStateBridge.addDebugOnlyLog("Connecting [$mode] -> $cleanHost:$port (User: $cleanUser)")
 
-            val sshConfig = buildAndroidSafeSshConfig(isSlowDns)
-            val useCustomFactory = !isSlowDns && mode != "SSH"
+            val primaryClient = createConnectedSshClient(
+                mode = mode,
+                cleanHost = cleanHost,
+                port = port,
+                cleanUser = cleanUser,
+                pass = pass,
+                payloadTemplate = payloadTemplate,
+                sni = sni,
+                proxyHost = proxyHost,
+                proxyPort = proxyPort,
+                isSlowDns = isSlowDns,
+                emitUiLogs = true
+            )
 
-            sshClient = SSHClient(sshConfig).apply {
-                addHostKeyVerifier(PromiscuousVerifier())
-                connectTimeout = if (isSlowDns) 45000 else 20000
-                timeout = 0
-
-                if (VpnStateBridge.sshCompression.value) {
-                    try { useCompression() } catch (_: Throwable) {}
-                }
-
-                // 4 MB SSH flow-control window + 64 KB packet size for full broadband speed
-                connection.windowSize = 4194304L
-                connection.maxPacketSize = 65536
-                val keepAliveSec = VpnStateBridge.pingIntervalSec.value.coerceIn(5, 120)
-                connection.keepAlive.keepAliveInterval = keepAliveSec
-
-                if (useCustomFactory) {
-                    socketFactory = createCustomTunnelSocketFactory(
-                        mode = mode,
-                        targetHost = cleanHost,
-                        targetPort = port,
-                        payloadTemplate = payloadTemplate,
-                        sni = sni.trim(),
-                        proxyHost = proxyHost.trim(),
-                        proxyPort = proxyPort,
-                        logToUi = true
-                    )
-                }
-            }
-
-            if (useCustomFactory) {
-                sshClient?.connect("127.0.0.1", port)
-            } else {
-                sshClient?.connect(cleanHost, port)
-            }
-
-            Log.d(TAG, "Authenticating SSH user '$cleanUser'...")
-            sshClient?.authPassword(cleanUser, pass)
-
-            if (sshClient?.isAuthenticated == true) {
+            if (primaryClient != null) {
+                sshPool.add(primaryClient)
                 isRunning = true
-                boostSshPool.clear()
-                sshClient?.let { boostSshPool.add(it) }
 
-                VpnStateBridge.addLog("HTTP/1.1 200 OK")
-                Log.d(TAG, "SSH Authenticated. Starting local SOCKS5 engine on 127.0.0.1:$localPort")
                 startLocalSocks5Server("127.0.0.1", localPort)
 
-                // Spawn parallel background SSH sessions for SlowDNS Boost or High-Speed Multi-Multiplexing
-                val extraSessions = if (isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value) 3 else 1
-                for (i in 1..extraSessions) {
-                    ioThreadPool.execute {
-                        try {
-                            val extraClient = SSHClient(buildAndroidSafeSshConfig(isSlowDns)).apply {
-                                addHostKeyVerifier(PromiscuousVerifier())
-                                connectTimeout = if (isSlowDns) 45000 else 15000
-                                timeout = 0
-                                connection.windowSize = 4194304L
-                                connection.maxPacketSize = 65536
-                                if (useCustomFactory) {
-                                    socketFactory = createCustomTunnelSocketFactory(
-                                        mode = mode,
-                                        targetHost = cleanHost,
-                                        targetPort = port,
-                                        payloadTemplate = payloadTemplate,
-                                        sni = sni.trim(),
-                                        proxyHost = proxyHost.trim(),
-                                        proxyPort = proxyPort,
-                                        logToUi = false
-                                    )
+                // Launch parallel background SSH transports:
+                // - For SSL/WS/Direct SSH: opens 3 additional parallel connections (4x total) to unlock 50+ Mbps speed
+                // - For SlowDNS with Boost ON: opens 5 additional parallel SSH sessions striped across SlowDNS Boost workers
+                val extraSessions = when {
+                    isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value -> 5
+                    !isSlowDns -> 3
+                    else -> 0
+                }
+
+                if (extraSessions > 0) {
+                    for (i in 1..extraSessions) {
+                        ioThreadPool.execute {
+                            try {
+                                if (!isRunning) return@execute
+                                val workerClient = createConnectedSshClient(
+                                    mode = mode,
+                                    cleanHost = cleanHost,
+                                    port = port,
+                                    cleanUser = cleanUser,
+                                    pass = pass,
+                                    payloadTemplate = payloadTemplate,
+                                    sni = sni,
+                                    proxyHost = proxyHost,
+                                    proxyPort = proxyPort,
+                                    isSlowDns = isSlowDns,
+                                    emitUiLogs = false
+                                )
+                                if (workerClient != null && isRunning) {
+                                    sshPool.add(workerClient)
+                                    VpnStateBridge.addDebugOnlyLog("Parallel SSH Turbo session #${sshPool.size} online")
+                                } else {
+                                    workerClient?.close()
                                 }
-                            }
-                            if (useCustomFactory) {
-                                extraClient.connect("127.0.0.1", port)
-                            } else {
-                                extraClient.connect(cleanHost, port)
-                            }
-                            extraClient.authPassword(cleanUser, pass)
-                            if (extraClient.isAuthenticated && isRunning) {
-                                boostSshPool.add(extraClient)
-                                Log.d(TAG, "Parallel Boost SSH session #$i active.")
-                            } else {
-                                extraClient.close()
-                            }
-                        } catch (_: Throwable) {}
+                            } catch (_: Throwable) {}
+                        }
                     }
                 }
                 true
             } else {
-                VpnStateBridge.addLog("Disconnected: Authentication failed.")
+                VpnStateBridge.addLog("Authentication failed.")
                 stopSshTunnel()
                 false
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "SSH Tunnel Error", t)
+            VpnStateBridge.addDebugOnlyLog("SSH Error: ${t.message}")
             val msg = t.message ?: ""
             if (msg.contains("Exhausted available authentication", ignoreCase = true) ||
                 msg.contains("Auth fail", ignoreCase = true) ||
                 msg.contains("UserAuthException", ignoreCase = true)
             ) {
-                VpnStateBridge.addLog("Disconnected: Invalid credentials.")
+                VpnStateBridge.addLog("Authentication failed: Invalid username or password.")
             } else {
-                VpnStateBridge.addLog("Disconnected: Connection failed.")
+                VpnStateBridge.addLog("Connection failed.")
             }
             stopSshTunnel()
             false
         }
-    }
-
-    private fun pickActiveSshClient(): SSHClient? {
-        val valid = boostSshPool.filter { it.isConnected && it.isAuthenticated }
-        if (valid.isEmpty()) return sshClient
-        val idx = (poolIndex.getAndIncrement() and Int.MAX_VALUE) % valid.size
-        return valid[idx]
     }
 
     private fun createCustomTunnelSocketFactory(
@@ -278,7 +288,7 @@ object SshEngine {
         sni: String,
         proxyHost: String,
         proxyPort: Int,
-        logToUi: Boolean
+        emitUiLogs: Boolean
     ): SocketFactory {
         return object : SocketFactory() {
             override fun createSocket(): Socket = openTunneledSocket()
@@ -289,10 +299,9 @@ object SshEngine {
 
             private fun openSslSocket(tcpHost: String, tcpPort: Int, sniHost: String, forceHttp1Alpn: Boolean): SSLSocket {
                 val baseSocket = Socket()
-                baseSocket.setPerformancePreferences(0, 2, 1)
+                baseSocket.setPerformancePreferences(0, 1, 2) // Prioritize high bandwidth
                 baseSocket.tcpNoDelay = true
                 baseSocket.keepAlive = true
-                baseSocket.trafficClass = 0x10 // IPTOS_LOWDELAY
                 baseSocket.sendBufferSize = 524288
                 baseSocket.receiveBufferSize = 524288
                 baseSocket.connect(InetSocketAddress(tcpHost, tcpPort), 15000)
@@ -316,12 +325,8 @@ object SshEngine {
                 val sniHost = sni.ifEmpty { targetHost }
 
                 if (mode == "SSH+SSL") {
-                    Log.d(TAG, "Opening SSL/TLS socket to $tcpHost:$tcpPort (SNI: $sniHost)")
                     val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = false)
-                    if (logToUi) VpnStateBridge.addLog("TLS Handshake OK")
-
-                    val pushbackIn = PushbackInputStream(BufferedInputStream(sslSock.getInputStream(), 65536), 16384)
-                    val bufferedOut = BufferedOutputStream(sslSock.getOutputStream(), 65536)
+                    val pushbackIn = PushbackInputStream(sslSock.getInputStream(), 32768)
                     val prevTimeout = sslSock.soTimeout
                     sslSock.soTimeout = 1200
                     try {
@@ -331,40 +336,41 @@ object SshEngine {
                             val str = String(peek, 0, n, Charsets.ISO_8859_1)
                             pushbackIn.unread(peek, 0, n)
                             if (str.startsWith("SSH-")) {
-                                if (logToUi) VpnStateBridge.addLog("Switching Protocols...")
+                                if (emitUiLogs) VpnStateBridge.addLog("HTTP/1.1 200 OK")
                                 sslSock.soTimeout = prevTimeout
-                                return PushbackWrappedSocket(sslSock, pushbackIn, bufferedOut)
+                                return PushbackWrappedSocket(sslSock, pushbackIn)
                             }
                         }
                     } catch (_: SocketTimeoutException) {
                     } catch (_: Throwable) {}
 
-                    if (logToUi) VpnStateBridge.addLog("Switching Protocols...")
                     try {
                         sslSock.soTimeout = 10000
                         val autoWsPayload =
                             "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
-                        bufferedOut.write(autoWsPayload.toByteArray(Charsets.UTF_8))
-                        bufferedOut.flush()
-                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn, logToUi)
+                        val out = sslSock.getOutputStream()
+                        out.write(autoWsPayload.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn, emitUiLogs)
                         sslSock.soTimeout = prevTimeout
-                        return PushbackWrappedSocket(sslSock, pushbackIn, bufferedOut)
+                        return PushbackWrappedSocket(sslSock, pushbackIn)
                     } catch (_: Throwable) {
                         try { sslSock.close() } catch (_: Throwable) {}
                         val fallbackSsl = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = true)
-                        val fbPushback = PushbackInputStream(BufferedInputStream(fallbackSsl.getInputStream(), 65536), 16384)
-                        val fbOut = BufferedOutputStream(fallbackSsl.getOutputStream(), 65536)
+                        val fbPushback = PushbackInputStream(fallbackSsl.getInputStream(), 32768)
                         val autoWsPayload =
                             "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
-                        fbOut.write(autoWsPayload.toByteArray(Charsets.UTF_8))
-                        fbOut.flush()
+                        fallbackSsl.getOutputStream().apply {
+                            write(autoWsPayload.toByteArray(Charsets.UTF_8))
+                            flush()
+                        }
                         fallbackSsl.soTimeout = 10000
                         try {
-                            consumeHttpUpgradeOrPreserveSshBanner(fbPushback, logToUi)
+                            consumeHttpUpgradeOrPreserveSshBanner(fbPushback, emitUiLogs)
                         } finally {
                             fallbackSsl.soTimeout = 0
                         }
-                        return PushbackWrappedSocket(fallbackSsl, fbPushback, fbOut)
+                        return PushbackWrappedSocket(fallbackSsl, fbPushback)
                     }
                 }
 
@@ -375,27 +381,23 @@ object SshEngine {
                 }
 
                 val activeSocket: Socket = if (shouldUseTls) {
-                    val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = false)
-                    if (logToUi) VpnStateBridge.addLog("TLS Handshake OK")
-                    sslSock
+                    openSslSocket(tcpHost, tcpPort, sniHost, forceHttp1Alpn = false)
                 } else {
                     Socket().apply {
-                        setPerformancePreferences(0, 2, 1)
+                        setPerformancePreferences(0, 1, 2)
                         tcpNoDelay = true
                         keepAlive = true
-                        trafficClass = 0x10
                         sendBufferSize = 524288
                         receiveBufferSize = 524288
                         connect(InetSocketAddress(tcpHost, tcpPort), 15000)
                     }
                 }
 
-                val pushbackIn = PushbackInputStream(BufferedInputStream(activeSocket.getInputStream(), 65536), 16384)
-                val bufferedOut = BufferedOutputStream(activeSocket.getOutputStream(), 65536)
+                val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 32768)
 
                 if (shouldUseTls) {
                     val prevTimeout = activeSocket.soTimeout
-                    activeSocket.soTimeout = 450
+                    activeSocket.soTimeout = 400
                     try {
                         val peek = ByteArray(16)
                         val n = pushbackIn.read(peek)
@@ -403,9 +405,9 @@ object SshEngine {
                             val str = String(peek, 0, n, Charsets.ISO_8859_1)
                             pushbackIn.unread(peek, 0, n)
                             if (str.startsWith("SSH-")) {
-                                if (logToUi) VpnStateBridge.addLog("Switching Protocols...")
+                                if (emitUiLogs) VpnStateBridge.addLog("HTTP/1.1 200 OK")
                                 activeSocket.soTimeout = prevTimeout
-                                return PushbackWrappedSocket(activeSocket, pushbackIn, bufferedOut)
+                                return PushbackWrappedSocket(activeSocket, pushbackIn)
                             }
                         }
                     } catch (_: SocketTimeoutException) {
@@ -428,35 +430,35 @@ object SshEngine {
                         sni = sniHost
                     )
 
+                    val out: OutputStream = activeSocket.getOutputStream()
                     val chunks = formatted.split(Regex("\\[(instant_)?split\\]", RegexOption.IGNORE_CASE))
                     for ((index, chunk) in chunks.withIndex()) {
                         if (chunk.isNotEmpty()) {
-                            bufferedOut.write(chunk.toByteArray(Charsets.UTF_8))
-                            bufferedOut.flush()
+                            out.write(chunk.toByteArray(Charsets.UTF_8))
+                            out.flush()
                             if (index < chunks.size - 1) {
                                 Thread.sleep(40)
                             }
                         }
                     }
-                    if (logToUi) VpnStateBridge.addLog("Switching Protocols...")
 
                     val previousTimeout = activeSocket.soTimeout
                     activeSocket.soTimeout = 12000
                     try {
-                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn, logToUi)
+                        consumeHttpUpgradeOrPreserveSshBanner(pushbackIn, emitUiLogs)
                     } finally {
                         activeSocket.soTimeout = previousTimeout
                     }
                 }
 
-                return PushbackWrappedSocket(activeSocket, pushbackIn, bufferedOut)
+                return PushbackWrappedSocket(activeSocket, pushbackIn)
             }
         }
     }
 
     private fun consumeHttpUpgradeOrPreserveSshBanner(
         pushbackIn: PushbackInputStream,
-        logToUi: Boolean
+        emitUiLogs: Boolean
     ) {
         val headerBuf = ByteArray(4096)
         var len = 0
@@ -472,18 +474,22 @@ object SshEngine {
             if (sshIdx >= 0 && currentStr.indexOf('\n', sshIdx) > sshIdx) {
                 val sshBannerBytes = currentStr.substring(sshIdx).toByteArray(Charsets.ISO_8859_1)
                 pushbackIn.unread(sshBannerBytes, 0, sshBannerBytes.size)
-                if (logToUi) VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
+                if (emitUiLogs) {
+                    VpnStateBridge.addLog("HTTP/1.1 200 OK")
+                    VpnStateBridge.addLog("Switching Protocols...")
+                }
                 return
             }
 
             if (currentStr.endsWith("\r\n\r\n")) {
                 val firstLine = currentStr.lineSequence().firstOrNull()?.trim() ?: ""
-                Log.d(TAG, "HTTP/WS Response: $firstLine")
-                if (logToUi) {
-                    if (firstLine.contains("101")) {
-                        VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
-                    } else {
-                        VpnStateBridge.addLog("HTTP/1.1 200 OK")
+                if (emitUiLogs) {
+                    when {
+                        firstLine.contains("101") -> {
+                            VpnStateBridge.addLog("HTTP/1.1 200 OK")
+                            VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
+                        }
+                        firstLine.isNotEmpty() -> VpnStateBridge.addLog(firstLine)
                     }
                 }
 
@@ -506,14 +512,13 @@ object SshEngine {
 
     private class PushbackWrappedSocket(
         private val delegate: Socket,
-        private val customIn: InputStream,
-        private val customOut: OutputStream
+        private val customIn: InputStream
     ) : Socket() {
         override fun connect(endpoint: SocketAddress?) {}
         override fun connect(endpoint: SocketAddress?, timeout: Int) {}
         override fun bind(bindpoint: SocketAddress?) {}
         override fun getInputStream(): InputStream = customIn
-        override fun getOutputStream(): OutputStream = customOut
+        override fun getOutputStream(): OutputStream = delegate.getOutputStream()
         override fun isConnected(): Boolean = delegate.isConnected
         override fun isClosed(): Boolean = delegate.isClosed
         override fun isBound(): Boolean = true
@@ -544,20 +549,11 @@ object SshEngine {
         override fun getLocalSocketAddress(): SocketAddress? = delegate.localSocketAddress
     }
 
-    /**
-     * Zero-Copy OneShotServerSocket: Hands the already-connected Tun2Socks client socket
-     * directly into SSHJ's LocalPortForwarder without creating a second loopback socket hop!
-     */
-    private class OneShotServerSocket(private val acceptedSocket: Socket) : ServerSocket() {
-        private val handedOff = AtomicBoolean(false)
-
-        override fun accept(): Socket {
-            if (handedOff.compareAndSet(false, true)) {
-                return acceptedSocket
-            }
-            close()
-            throw SocketException("OneShot handoff completed")
-        }
+    private fun pickSshClient(): SSHClient? {
+        val healthy = sshPool.filter { it.isConnected && it.isAuthenticated }
+        if (healthy.isEmpty()) return sshPool.firstOrNull()
+        val idx = (poolSelector.getAndIncrement() and Int.MAX_VALUE) % healthy.size
+        return healthy[idx]
     }
 
     private fun startLocalSocks5Server(bindHost: String, localPort: Int) {
@@ -572,16 +568,36 @@ object SshEngine {
                         handleSocks5Client(clientSocket)
                     }
                 }
-            } catch (t: Throwable) {
-                Log.d(TAG, "SOCKS5 server stopped: ${t.message}")
-            }
+            } catch (_: Throwable) {}
         }
     }
 
+    private fun openSshForwardSocket(targetHost: String, targetPort: Int): Pair<ServerSocket, Socket> {
+        val bridgeServer = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+        val bridgePort = bridgeServer.localPort
+        activeBridges.add(bridgeServer)
+
+        val selectedClient = pickSshClient()
+        val params = Parameters("127.0.0.1", bridgePort, targetHost, targetPort)
+        ioThreadPool.execute {
+            try {
+                selectedClient?.newLocalPortForwarder(params, bridgeServer)?.listen()
+            } catch (_: Throwable) {}
+        }
+
+        val bridgeSocket = Socket()
+        bridgeSocket.tcpNoDelay = true
+        bridgeSocket.sendBufferSize = 262144
+        bridgeSocket.receiveBufferSize = 262144
+        bridgeSocket.connect(InetSocketAddress("127.0.0.1", bridgePort), 10000)
+        return Pair(bridgeServer, bridgeSocket)
+    }
+
     private fun handleSocks5Client(client: Socket) {
+        var bridgeServer: ServerSocket? = null
+        var bridgeSocket: Socket? = null
         try {
             client.tcpNoDelay = true
-            client.trafficClass = 0x10
             client.sendBufferSize = 262144
             client.receiveBufferSize = 262144
             val ins = client.getInputStream()
@@ -642,26 +658,56 @@ object SshEngine {
                 return
             }
 
-            // Reply SOCKS5 Success immediately and hand client socket directly into SSHJ channel
+            val pair = openSshForwardSocket(targetHost, targetPort)
+            bridgeServer = pair.first
+            bridgeSocket = pair.second
+
             outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             outs.flush()
 
-            val activeClient = pickActiveSshClient()
-            if (activeClient == null) {
-                client.close()
-                return
+            val sshIn = bridgeSocket.getInputStream()
+            val sshOut = bridgeSocket.getOutputStream()
+
+            // High-speed 64KB zero-fragmentation stream copy (only flushes when input buffer drains)
+            val upstreamFuture = ioThreadPool.submit {
+                try {
+                    val buf = ByteArray(65536)
+                    while (isRunning) {
+                        val n = ins.read(buf)
+                        if (n == -1) break
+                        sshOut.write(buf, 0, n)
+                        if (ins.available() == 0) {
+                            sshOut.flush()
+                        }
+                    }
+                    sshOut.flush()
+                } catch (_: Throwable) {
+                } finally {
+                    try { bridgeSocket.close() } catch (_: Throwable) {}
+                }
             }
 
-            val params = Parameters("127.0.0.1", 0, targetHost, targetPort)
-            val oneShot = OneShotServerSocket(client)
             try {
-                activeClient.newLocalPortForwarder(params, oneShot).listen()
-            } catch (_: Throwable) {
-            } finally {
-                try { oneShot.close() } catch (_: Throwable) {}
-            }
+                val buf = ByteArray(65536)
+                while (isRunning) {
+                    val n = sshIn.read(buf)
+                    if (n == -1) break
+                    outs.write(buf, 0, n)
+                    if (sshIn.available() == 0) {
+                        outs.flush()
+                    }
+                }
+                outs.flush()
+            } catch (_: Throwable) {}
+            upstreamFuture.cancel(true)
         } catch (_: Throwable) {
+        } finally {
             try { client.close() } catch (_: Throwable) {}
+            try { bridgeSocket?.close() } catch (_: Throwable) {}
+            try {
+                bridgeServer?.close()
+                activeBridges.remove(bridgeServer)
+            } catch (_: Throwable) {}
         }
     }
 
@@ -669,7 +715,7 @@ object SshEngine {
         var udpRelay: DatagramSocket? = null
         try {
             udpRelay = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
-            synchronized(activeUdpSockets) { activeUdpSockets.add(udpRelay) }
+            activeUdpSockets.add(udpRelay)
             val localUdpPort = udpRelay.localPort
 
             outs.write(
@@ -720,26 +766,17 @@ object SshEngine {
                         val udpPayload = data.copyOfRange(offset, data.size)
 
                         ioThreadPool.execute {
-                            var bridgeServer: ServerSocket? = null
-                            var bridgeSocket: Socket? = null
+                            var bServer: ServerSocket? = null
+                            var bSocket: Socket? = null
                             try {
                                 val dnsTarget = if (dstPort == 53) dstHost else "8.8.8.8"
-                                bridgeServer = ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
-                                val bPort = bridgeServer.localPort
-                                val params = Parameters("127.0.0.1", bPort, dnsTarget, 53)
-                                val activeClient = pickActiveSshClient()
-                                ioThreadPool.execute {
-                                    try {
-                                        activeClient?.newLocalPortForwarder(params, bridgeServer)?.listen()
-                                    } catch (_: Throwable) {}
-                                }
-                                bridgeSocket = Socket()
-                                bridgeSocket.tcpNoDelay = true
-                                bridgeSocket.soTimeout = 4000
-                                bridgeSocket.connect(InetSocketAddress("127.0.0.1", bPort), 4000)
+                                val pair = openSshForwardSocket(dnsTarget, 53)
+                                bServer = pair.first
+                                bSocket = pair.second
+                                bSocket.soTimeout = 5000
 
-                                val dos = DataOutputStream(bridgeSocket.getOutputStream())
-                                val dis = DataInputStream(bridgeSocket.getInputStream())
+                                val dos = DataOutputStream(bSocket.getOutputStream())
+                                val dis = DataInputStream(bSocket.getInputStream())
                                 dos.writeShort(udpPayload.size)
                                 dos.write(udpPayload)
                                 dos.flush()
@@ -755,8 +792,11 @@ object SshEngine {
                                 relayRef.send(DatagramPacket(fullResp, fullResp.size, clientAddr))
                             } catch (_: Throwable) {
                             } finally {
-                                try { bridgeSocket?.close() } catch (_: Throwable) {}
-                                try { bridgeServer?.close() } catch (_: Throwable) {}
+                                try { bSocket?.close() } catch (_: Throwable) {}
+                                try {
+                                    bServer?.close()
+                                    activeBridges.remove(bServer)
+                                } catch (_: Throwable) {}
                             }
                         }
                     } catch (_: Throwable) {
@@ -770,7 +810,7 @@ object SshEngine {
         } finally {
             try {
                 udpRelay?.close()
-                synchronized(activeUdpSockets) { activeUdpSockets.remove(udpRelay) }
+                activeUdpSockets.remove(udpRelay)
             } catch (_: Throwable) {}
             try { client.close() } catch (_: Throwable) {}
         }
@@ -778,27 +818,28 @@ object SshEngine {
 
     fun stopSshTunnel() {
         isRunning = false
-        synchronized(activeUdpSockets) {
-            activeUdpSockets.forEach {
-                try { it.close() } catch (_: Throwable) {}
-            }
-            activeUdpSockets.clear()
+        activeUdpSockets.forEach {
+            try { it.close() } catch (_: Throwable) {}
         }
+        activeUdpSockets.clear()
+
+        activeBridges.forEach {
+            try { it.close() } catch (_: Throwable) {}
+        }
+        activeBridges.clear()
+
         try { localServer?.close() } catch (_: Throwable) {}
         localServer = null
 
-        boostSshPool.forEach { client ->
-            try {
-                client.disconnect()
-                client.close()
-            } catch (_: Throwable) {}
+        val clientsToClose = ArrayList(sshPool)
+        sshPool.clear()
+        ioThreadPool.execute {
+            clientsToClose.forEach { client ->
+                try {
+                    client.disconnect()
+                    client.close()
+                } catch (_: Throwable) {}
+            }
         }
-        boostSshPool.clear()
-
-        try {
-            sshClient?.disconnect()
-            sshClient?.close()
-        } catch (_: Throwable) {}
-        sshClient = null
     }
 }
