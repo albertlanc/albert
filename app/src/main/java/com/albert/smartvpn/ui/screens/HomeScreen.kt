@@ -38,13 +38,15 @@ fun HomeScreen(
     isConnected: Boolean,
     activeProfile: VpnProfile?,
     onToggleConnection: () -> Unit,
+    onPingClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val connectionState by VpnStateBridge.connectionState.collectAsState()
     val statusMessage by VpnStateBridge.statusMessage.collectAsState()
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
-    val slowDnsBoostEnabled by VpnStateBridge.slowDnsBoostEnabled.collectAsState()
+    val pingResultText by VpnStateBridge.pingResultText.collectAsState()
+    val isPinging by VpnStateBridge.isPinging.collectAsState()
     val localSocksPort by VpnStateBridge.localSocksPort.collectAsState()
     val customDns1 by VpnStateBridge.customDns1.collectAsState()
     val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
@@ -101,7 +103,7 @@ fun HomeScreen(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 4500 else 10000, easing = LinearEasing)
+            animation = tween(durationMillis = if (isConnected) 4000 else 10000, easing = LinearEasing)
         ),
         label = "OuterRing"
     )
@@ -109,10 +111,37 @@ fun HomeScreen(
         initialValue = 360f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 3200 else 8000, easing = LinearEasing)
+            animation = tween(durationMillis = if (isConnected) 2800 else 8000, easing = LinearEasing)
         ),
         label = "InnerRing"
     )
+
+    // Compute accurate Protocol & Security Layer labels for VLESS, VMess, Trojan, SSH, SlowDNS, etc.
+    val protocolEngineDisplay = remember(activeProfile, isConnected) {
+        if (activeProfile == null) "READY"
+        else "${activeProfile.protocol.uppercase()} (${activeProfile.port})"
+    }
+
+    val securityLayerDisplay = remember(activeProfile, isConnected) {
+        if (activeProfile == null) {
+            "BBR / TLS"
+        } else {
+            val proto = activeProfile.protocol.uppercase()
+            val sec = activeProfile.security.uppercase()
+            val net = activeProfile.network.uppercase()
+            when {
+                proto in listOf("VLESS", "VMESS", "TROJAN") -> {
+                    val tlsLabel = if (activeProfile.port == 80 || sec == "NONE") "NO-TLS (80)" else "TLS ($net)"
+                    "$proto • $tlsLabel"
+                }
+                proto == "SLOWDNS" -> "SLOWDNS • DNSTT"
+                proto.contains("SSH") -> "$proto • ${if (sec == "TLS" || activeProfile.port == 443) "TLSv1.3" else "BBR-SSH"}"
+                proto == "WIREGUARD" -> "WIREGUARD • NOISE"
+                proto == "HYSTERIA2" -> "HYSTERIA2 • QUIC"
+                else -> "$proto • $sec"
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -196,63 +225,7 @@ fun HomeScreen(
             }
         }
 
-        // 2. SLOWDNS TURBO BOOST ACTIVATION BUTTON (LIKE ZIVPN / SSH CUSTOM)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(
-                    width = 1.dp,
-                    color = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(14.dp)
-                )
-                .clickable {
-                    val next = !slowDnsBoostEnabled
-                    VpnStateBridge.slowDnsBoostEnabled.value = next
-                    VpnStateBridge.addLog(if (next) "SlowDNS Boost Enabled." else "SlowDNS Boost Disabled.")
-                },
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = Icons.Default.RocketLaunch,
-                        contentDescription = null,
-                        tint = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "SlowDNS Speed Boost",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (slowDnsBoostEnabled) "ACTIVE • Multi-session DNS acceleration enabled" else "OFF • Tap to activate before connecting SlowDNS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Switch(
-                    checked = slowDnsBoostEnabled,
-                    onCheckedChange = {
-                        VpnStateBridge.slowDnsBoostEnabled.value = it
-                        VpnStateBridge.addLog(if (it) "SlowDNS Boost Enabled." else "SlowDNS Boost Disabled.")
-                    }
-                )
-            }
-        }
-
-        // 3. QUANTUM ORBITAL REACTOR CORE & LIVE TELEMETRY
+        // 2. QUANTUM ORBITAL REACTOR CORE + PING BUTTON BENEATH STATUS + LIVE SPEEDOMETER
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -271,7 +244,7 @@ fun HomeScreen(
 
                 Box(
                     modifier = Modifier
-                        .size(142.dp)
+                        .size(138.dp)
                         .clickable { onToggleConnection() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -322,7 +295,7 @@ fun HomeScreen(
 
                     Box(
                         modifier = Modifier
-                            .size(82.dp)
+                            .size(80.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.radialGradient(
@@ -338,7 +311,7 @@ fun HomeScreen(
                             imageVector = if (isConnected) Icons.Default.Lock else Icons.Default.Shield,
                             contentDescription = null,
                             tint = accentColor,
-                            modifier = Modifier.size(42.dp)
+                            modifier = Modifier.size(40.dp)
                         )
                     }
                 }
@@ -354,13 +327,46 @@ fun HomeScreen(
                 )
 
                 Text(
-                    text = if (isConnected) "4X TURBO ENCRYPTED STREAM ACTIVE" else "SYSTEM STANDBY • READY",
+                    text = if (isConnected) "BBR TURBO STREAM ACTIVE • CONNECTED" else "SYSTEM STANDBY • READY",
                     style = MaterialTheme.typography.labelSmall,
                     color = accentColor,
-                    letterSpacing = 1.4.sp
+                    letterSpacing = 1.3.sp
                 )
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // PING BUTTON DIRECTLY BENEATH "SYSTEM STANDBY • READY" (ENABLED ONLY WHEN CONNECTED)
+                Button(
+                    onClick = onPingClick,
+                    enabled = isConnected && !isPinging,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = "Ping Tunnel",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isConnected) {
+                            if (isPinging) "Pinging Connected Server..." else pingResultText
+                        } else {
+                            "PING LATENCY & SPEED (CONNECT VPN FIRST)"
+                        },
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
                     modifier = Modifier
@@ -416,21 +422,21 @@ fun HomeScreen(
             }
         }
 
-        // 4. TELEMETRY & ENGINE STATS GRID
+        // 3. TELEMETRY & ENGINE STATS GRID (WITH FIXED SECURITY LAYER DISPLAY)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             TelemetryStatCard(
                 title = "PROTOCOL ENGINE",
-                value = activeProfile?.protocol ?: "READY",
+                value = protocolEngineDisplay,
                 icon = Icons.Default.Bolt,
                 accent = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f)
             )
             TelemetryStatCard(
                 title = "SECURITY LAYER",
-                value = activeProfile?.security?.uppercase() ?: "TLS / SSH",
+                value = securityLayerDisplay,
                 icon = Icons.Default.Security,
                 accent = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.weight(1f)
@@ -442,9 +448,9 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             TelemetryStatCard(
-                title = "LOCAL SOCKS5",
-                value = "127.0.0.1:$localSocksPort",
-                icon = Icons.Default.Lan,
+                title = "BBR CONGESTION",
+                value = "BBRv3 ACTIVE",
+                icon = Icons.Default.RocketLaunch,
                 accent = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier.weight(1f)
             )
@@ -457,7 +463,7 @@ fun HomeScreen(
             )
         }
 
-        // 5. DEVICE HARDWARE ID BADGE
+        // 4. DEVICE HARDWARE ID BADGE
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -494,7 +500,7 @@ fun HomeScreen(
                     }
                 }
                 Text(
-                    text = "ENCLAVE LOCKED",
+                    text = "v6.0 BBR",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.Bold
@@ -550,3 +556,4 @@ private fun TelemetryStatCard(
         }
     }
 }
+// === END OF FILE ===
