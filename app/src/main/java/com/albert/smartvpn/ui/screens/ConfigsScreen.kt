@@ -52,6 +52,7 @@ fun ConfigsScreen(
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var sharingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var unlockPromptProfile by remember { mutableStateOf<VpnProfile?>(null) }
+    var unlockActionType by remember { mutableStateOf("EDIT") } // "EDIT" or "SHARE"
     var showImportModal by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -105,7 +106,7 @@ fun ConfigsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Tap + to build SSH, SSH+WS+SNI+Payload (443/80), SlowDNS, VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
+                        text = "Tap + to build SSH, SSH+WS+SNI+Payload (443/80), SlowDNS (15x Boost), VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -167,8 +168,8 @@ fun ConfigsScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = when {
-                                        profile.isLocked -> "${profile.protocol} • [Locked Config]"
-                                        profile.protocol == "SLOWDNS" -> "SLOWDNS • NS: ${profile.slowDnsDomain} (${profile.slowDnsServerIp}:53)"
+                                        profile.isLocked -> "${profile.protocol} • [Hardware-Locked Enclave]"
+                                        profile.protocol == "SLOWDNS" -> "SLOWDNS (15x Boost) • NS: ${profile.slowDnsDomain}"
                                         else -> "${profile.protocol} • ${profile.server}:${profile.port}"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
@@ -176,18 +177,27 @@ fun ConfigsScreen(
                                 )
                                 if (profile.lockedDeviceId.isNotBlank()) {
                                     Text(
-                                        text = "HWID Locked: ${profile.lockedDeviceId}",
+                                        text = "HWID Bound: ${profile.lockedDeviceId}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color(0xFFFFAB00)
                                     )
                                 }
                             }
                             Row {
-                                IconButton(onClick = { sharingProfile = profile }) {
+                                // Prevent re-exporting a locked config unless creator unlocks it first
+                                IconButton(onClick = {
+                                    if (profile.isLocked) {
+                                        unlockActionType = "SHARE"
+                                        unlockPromptProfile = profile
+                                    } else {
+                                        sharingProfile = profile
+                                    }
+                                }) {
                                     Icon(Icons.Default.Share, contentDescription = "Share & Lock Config")
                                 }
                                 IconButton(onClick = {
                                     if (profile.isLocked) {
+                                        unlockActionType = "EDIT"
                                         unlockPromptProfile = profile
                                     } else {
                                         editingProfile = profile
@@ -226,17 +236,17 @@ fun ConfigsScreen(
         AlertDialog(
             onDismissRequest = { unlockPromptProfile = null },
             icon = { Icon(Icons.Default.Lock, contentDescription = null) },
-            title = { Text("Locked Configuration") },
+            title = { Text("Hardware-Locked Config") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Enter the creator passphrase to unlock and edit this config:")
+                    Text("This configuration is cryptographically locked. Enter the creator passphrase to unlock:")
                     OutlinedTextField(
                         value = enteredPass,
                         onValueChange = {
                             enteredPass = it
                             errorText = ""
                         },
-                        label = { Text("Passphrase") },
+                        label = { Text("Creator Passphrase") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
@@ -250,10 +260,14 @@ fun ConfigsScreen(
                 Button(onClick = {
                     if (target.lockPassphrase.isNotEmpty() && enteredPass == target.lockPassphrase) {
                         unlockPromptProfile = null
-                        editingProfile = target
-                        showConfigDialog = true
+                        if (unlockActionType == "SHARE") {
+                            sharingProfile = target
+                        } else {
+                            editingProfile = target
+                            showConfigDialog = true
+                        }
                     } else {
-                        errorText = "Invalid passphrase!"
+                        errorText = "Access Denied: Locked configs cannot be viewed or exported without the creator passphrase."
                     }
                 }) {
                     Text("Unlock")
@@ -301,7 +315,7 @@ fun ProtocolConfigDialog(
         "SSH+WS+SNI+PAYLOAD" to "SSH + WS + SNI + Payload (Port 443 / 80)",
         "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload/Proxy)",
         "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443 / 8080)",
-        "SLOWDNS" to "SlowDNS (DNSTT Tunnel - UDP 53)",
+        "SLOWDNS" to "SlowDNS (15x Boost DNSTT - UDP 53)",
         "VLESS" to "VLESS (TLS 443 / noTLS 80)",
         "VMESS" to "VMess (TLS 443 / noTLS 80)",
         "TROJAN" to "Trojan (TLS 443 / noTLS 80)",
@@ -458,7 +472,6 @@ fun ProtocolConfigDialog(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // 1. Select Tunnel Protocol & Profile Name
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         shape = RoundedCornerShape(12.dp),
@@ -522,7 +535,6 @@ fun ProtocolConfigDialog(
                         }
                     }
 
-                    // 2. Dynamic Protocol-Specific Pages
                     when (selectedProtocol) {
                         "SSH" -> {
                             SshServerAndAuthCard(
@@ -615,7 +627,6 @@ fun ProtocolConfigDialog(
                                 }
                             }
 
-                            // Card 3: ONLY SNI (Bug Host) & WebSocket Payload
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                                 shape = RoundedCornerShape(12.dp),
@@ -802,7 +813,7 @@ fun ProtocolConfigDialog(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Text(
-                                        text = "3. SlowDNS Settings (Default UDP Port 53)",
+                                        text = "3. SlowDNS 15x Turbo Boost Settings (UDP Port 53)",
                                         style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -1192,10 +1203,13 @@ fun ShareAndLockDialog(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val myDeviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
 
-    var lockConfig by remember { mutableStateOf(profile.isLocked) }
+    var lockConfig by remember { mutableStateOf(true) }
     var passphrase by remember { mutableStateOf(profile.lockPassphrase) }
-    var targetDeviceId by remember { mutableStateOf(profile.lockedDeviceId) }
+    var targetDeviceId by remember {
+        mutableStateOf(profile.lockedDeviceId.ifBlank { myDeviceId })
+    }
     var showQrCode by remember { mutableStateOf(false) }
 
     val encryptedUri = remember(profile, lockConfig, passphrase, targetDeviceId) {
@@ -1207,49 +1221,51 @@ fun ShareAndLockDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Share & Lock: ${profile.name}") },
+        title = { Text("HWID Vault Lock: ${profile.name}") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Lock Config (Hide Credentials)", fontWeight = FontWeight.SemiBold)
-                    Switch(
-                        checked = lockConfig,
-                        onCheckedChange = {
-                            lockConfig = it
-                            onUpdateLockState(
-                                profile.copy(
-                                    isLocked = it,
-                                    lockPassphrase = passphrase,
-                                    lockedDeviceId = targetDeviceId
-                                )
-                            )
-                        }
-                    )
-                }
+                Text(
+                    text = "AES-256-GCM Hardware-Bound Encryption: Only the device matching the Hardware ID below (plus passphrase) can decrypt this file, QR, or Cloud code.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 OutlinedTextField(
                     value = targetDeviceId,
                     onValueChange = {
-                        targetDeviceId = it
+                        targetDeviceId = it.trim().uppercase()
                         onUpdateLockState(
                             profile.copy(
                                 isLocked = lockConfig,
                                 lockPassphrase = passphrase,
-                                lockedDeviceId = it.trim().uppercase()
+                                lockedDeviceId = targetDeviceId
                             )
                         )
                     },
-                    label = { Text("Lock to User Device ID (SVPN-XXXX, Optional)") },
+                    label = { Text("Recipient Hardware ID (SVPN-XXXX-XXXX-XXXX)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(
+                        onClick = { targetDeviceId = myDeviceId },
+                        label = { Text("Lock to My ID") }
+                    )
+                    AssistChip(
+                        onClick = {
+                            clipboardManager.getText()?.text?.trim()?.let { clip ->
+                                if (clip.startsWith("SVPN-", ignoreCase = true)) {
+                                    targetDeviceId = clip.uppercase()
+                                }
+                            }
+                        },
+                        label = { Text("Paste User ID") }
+                    )
+                }
 
                 OutlinedTextField(
                     value = passphrase,
@@ -1263,7 +1279,7 @@ fun ShareAndLockDialog(
                             )
                         )
                     },
-                    label = { Text("Passphrase Protection (Optional)") },
+                    label = { Text("Passphrase Key (Creator Password)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1282,8 +1298,8 @@ fun ShareAndLockDialog(
                                 putExtra(Intent.EXTRA_SUBJECT, "${profile.name}.svpn")
                                 putExtra(Intent.EXTRA_TEXT, encryptedUri)
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share .svpn Config"))
-                            VpnStateBridge.addLog("Exported ${profile.name}.svpn")
+                            context.startActivity(Intent.createChooser(sendIntent, "Share Encrypted .svpn File"))
+                            VpnStateBridge.addLog("Exported HWID-bound ${profile.name}.svpn")
                         } catch (t: Throwable) {
                             VpnStateBridge.addLog("Share error: ${t.message}")
                         }
@@ -1292,33 +1308,33 @@ fun ShareAndLockDialog(
                 ) {
                     Icon(Icons.Default.InsertDriveFile, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Share Config File (.svpn)")
+                    Text("Share HWID-Locked File (.svpn)")
                 }
 
                 OutlinedButton(
                     onClick = {
                         clipboardManager.setText(AnnotatedString(encryptedUri))
-                        VpnStateBridge.addLog("Copied encrypted smartvpn:// link to clipboard.")
+                        VpnStateBridge.addLog("Copied HWID + Passphrase encrypted link.")
                         onDismiss()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Key, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Copy Passphrase / HWID Locked Link")
+                    Text("Copy HWID + Passphrase Link")
                 }
 
                 OutlinedButton(
                     onClick = {
                         clipboardManager.setText(AnnotatedString(cloudToken))
-                        VpnStateBridge.addLog("Copied SVPN-CLOUD token to clipboard.")
+                        VpnStateBridge.addLog("Copied HWID-bound SVPN-CLOUD token.")
                         onDismiss()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.CloudUpload, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Copy Cloud Config Code")
+                    Text("Copy Cloud Config Token")
                 }
 
                 OutlinedButton(
@@ -1327,7 +1343,7 @@ fun ShareAndLockDialog(
                 ) {
                     Icon(Icons.Default.QrCode, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (showQrCode) "Hide QR Code" else "Show Config QR Code")
+                    Text(if (showQrCode) "Hide QR Code" else "Generate HWID-Locked QR Code")
                 }
 
                 if (showQrCode) {
@@ -1431,13 +1447,14 @@ fun ImportAdvancedDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Import Locked / Cloud Config") },
+        title = { Text("Import HWID / Cloud Config") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Your Device ID: $myDeviceId",
+                    text = "Your Hardware ID: $myDeviceId",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
                 )
                 OutlinedTextField(
                     value = configInput,
@@ -1445,7 +1462,7 @@ fun ImportAdvancedDialog(
                         configInput = it
                         errorMsg = ""
                     },
-                    label = { Text("Config Link / Cloud Code / .conf") },
+                    label = { Text("Encrypted Link / SVPN-CLOUD / .svpn") },
                     minLines = 3,
                     maxLines = 5,
                     modifier = Modifier.fillMaxWidth()
@@ -1472,22 +1489,22 @@ fun ImportAdvancedDialog(
         },
         confirmButton = {
             Button(onClick = {
-                val parsed = ConfigCryptoHelper.importProfileUri(configInput, passphrase)
+                val parsed = ConfigCryptoHelper.importProfileUri(configInput, passphrase, myDeviceId)
                     ?: VpnConfigParser.parseUri(configInput)
                 if (parsed != null) {
                     if (parsed.lockedDeviceId.isNotBlank() &&
                         !parsed.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                     ) {
-                        errorMsg = "HWID Lock Error: This config is locked to Device ID ${parsed.lockedDeviceId}"
+                        errorMsg = "HWID Mismatch: Config is locked to another device."
                     } else {
-                        VpnStateBridge.addLog("Imported config: ${parsed.name}")
+                        VpnStateBridge.addLog("Decrypted & imported config: ${parsed.name}")
                         onImportSuccess(parsed)
                     }
                 } else {
-                    errorMsg = "Could not unlock config. Check your passphrase or config code."
+                    errorMsg = "Decryption Rejected! Hardware ID ($myDeviceId) or Passphrase does not match this config."
                 }
             }) {
-                Text("Import")
+                Text("Unlock & Import")
             }
         },
         dismissButton = {
