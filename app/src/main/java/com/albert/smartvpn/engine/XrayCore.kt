@@ -28,16 +28,11 @@ object XrayCore {
                 if (method != null) {
                     return method.invoke(null, requestJson) as? String
                 }
-            } catch (_: Throwable) {
-            }
+            } catch (_: Throwable) {}
         }
         return null
     }
 
-    /**
-     * Bypasses Xray-core's restriction ("vless without TLS or other encryption is prohibited unless
-     * the server address is a private IP") by binding a local 127.0.0.1 loopback relay to the remote port 80 server.
-     */
     fun startLocalPort80Relay(remoteHost: String, remotePort: Int): Int {
         stopLocalPort80Relay()
         return try {
@@ -47,7 +42,7 @@ object XrayCore {
             val localRelayPort = server.localPort
             val cleanHost = remoteHost.trim()
 
-            VpnStateBridge.addLog("VLESS Port-80 Private Loopback Bridge active (127.0.0.1:$localRelayPort -> $cleanHost:$remotePort)")
+            Log.d(TAG, "VLESS Port-80 Private Loopback Bridge active (127.0.0.1:$localRelayPort -> $cleanHost:$remotePort)")
 
             thread(start = true, name = "VLESS-Port80-Relay") {
                 while (relayRunning) {
@@ -59,8 +54,8 @@ object XrayCore {
                             try {
                                 remoteSock = Socket()
                                 remoteSock.tcpNoDelay = true
-                                remoteSock.sendBufferSize = 131072
-                                remoteSock.receiveBufferSize = 131072
+                                remoteSock.sendBufferSize = 262144
+                                remoteSock.receiveBufferSize = 262144
                                 remoteSock.connect(InetSocketAddress(cleanHost, remotePort), 10000)
 
                                 val cIn = clientSock.getInputStream()
@@ -117,7 +112,7 @@ object XrayCore {
 
     fun RunXrayFromJSON(configJson: String): Boolean {
         return try {
-            VpnStateBridge.addLog("Starting Xray-core engine...")
+            VpnStateBridge.addLog("Switching Protocols...")
 
             val sanitizedConfig = configJson
                 .replace(Regex(""""allowInsecure"\s*:\s*(true|false)\s*,\s*"""), "")
@@ -138,19 +133,20 @@ object XrayCore {
                 val responseJson = JsonParser.parseString(responseStr).asJsonObject
                 val ok = responseJson.get("success")?.asBoolean ?: false
                 if (ok) {
-                    VpnStateBridge.addLog("Xray-core engine started successfully.")
+                    VpnStateBridge.addLog("HTTP/1.1 200 OK")
                     return true
                 } else {
-                    VpnStateBridge.addLog("Xray-core rejected config: $responseStr")
+                    Log.e(TAG, "Xray rejected config: $responseStr")
+                    VpnStateBridge.addLog("Disconnected: Handshake rejected.")
                     return false
                 }
             } else {
-                VpnStateBridge.addLog("Error: libXray native bridge unavailable.")
+                VpnStateBridge.addLog("Disconnected: Engine unavailable.")
                 false
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to start Xray: ${t.message}", t)
-            VpnStateBridge.addLog("Xray error: ${t.message}")
+            VpnStateBridge.addLog("Disconnected: Connection failed.")
             false
         }
     }
@@ -158,14 +154,14 @@ object XrayCore {
     fun verifyServerReachable(host: String, port: Int): Boolean {
         return try {
             val cleanHost = host.trim()
-            VpnStateBridge.addLog("Connecting to endpoint $cleanHost:$port...")
+            VpnStateBridge.addLog("Connecting...")
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(cleanHost, port), 10000)
             }
-            VpnStateBridge.addLog("Endpoint $cleanHost:$port is reachable.")
             true
         } catch (t: Throwable) {
-            VpnStateBridge.addLog("Endpoint unreachable ($host:$port): ${t.message}")
+            Log.e(TAG, "Endpoint unreachable ($host:$port): ${t.message}")
+            VpnStateBridge.addLog("Disconnected: Server unreachable.")
             false
         }
     }
