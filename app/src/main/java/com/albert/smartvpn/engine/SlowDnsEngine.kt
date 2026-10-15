@@ -81,7 +81,7 @@ object SlowDnsEngine {
         return try {
             isRunning = true
             VpnStateBridge.updateState("CONNECTING", "Connecting...")
-            VpnStateBridge.addLog(if (boostActive) "Connecting (SlowDNS Boost Active)..." else "Connecting...")
+            VpnStateBridge.addLog("Connecting...")
 
             val activeWorkerPorts = CopyOnWriteArrayList<Int>()
             val resolverAddr = "$primaryDnsIp:$dnsPort"
@@ -90,15 +90,14 @@ object SlowDnsEngine {
                 val workerPort = BASE_WORKER_PORT + idx
                 val workerListen = "127.0.0.1:$workerPort"
 
-                val cmd = listOf(
-                    dnsttBin.absolutePath,
-                    "-udp",
-                    resolverAddr,
-                    "-pubkey",
-                    cleanPubKey,
-                    cleanNs,
-                    workerListen
-                )
+                val cmd = when {
+                    rawDnsHost.startsWith("https://", true) ->
+                        listOf(dnsttBin.absolutePath, "-doh", dnsServerIp.trim(), "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    rawDnsHost.startsWith("tls://", true) ->
+                        listOf(dnsttBin.absolutePath, "-dot", dnsServerIp.trim().removePrefix("tls://"), "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    else ->
+                        listOf(dnsttBin.absolutePath, "-udp", resolverAddr, "-pubkey", cleanPubKey, cleanNs, workerListen)
+                }
 
                 val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
                 workerProcesses.add(proc)
@@ -113,9 +112,10 @@ object SlowDnsEngine {
                 }
             }
 
-            balancerServer = ServerSocket()
-            balancerServer?.reuseAddress = true
-            balancerServer?.bind(InetSocketAddress("127.0.0.1", localPort), 128)
+            balancerServer = ServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress("127.0.0.1", localPort), 128)
+            }
 
             thread(start = true, name = "SlowDNS-Balancer") {
                 while (isRunning) {
@@ -164,11 +164,12 @@ object SlowDnsEngine {
             val pickIdx = (roundRobinIndex.getAndIncrement() and Int.MAX_VALUE) % workerPorts.size
             val targetPort = workerPorts[pickIdx]
 
-            workerSock = Socket()
-            workerSock.tcpNoDelay = true
-            workerSock.sendBufferSize = 131072
-            workerSock.receiveBufferSize = 131072
-            workerSock.connect(InetSocketAddress("127.0.0.1", targetPort), 5000)
+            workerSock = Socket().apply {
+                tcpNoDelay = true
+                sendBufferSize = 131072
+                receiveBufferSize = 131072
+                connect(InetSocketAddress("127.0.0.1", targetPort), 5000)
+            }
 
             val cIn = clientSock.getInputStream()
             val cOut = clientSock.getOutputStream()
@@ -224,3 +225,4 @@ object SlowDnsEngine {
         }
     }
 }
+// === END OF FILE ===
