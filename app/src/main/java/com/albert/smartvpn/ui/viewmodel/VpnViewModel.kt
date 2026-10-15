@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,14 +45,13 @@ object VpnStateBridge {
     private val _connectedSinceMs = MutableStateFlow(0L)
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
-    private val _logs = MutableStateFlow<List<String>>(
-        listOf("Ready.")
-    )
+    private val _logs = MutableStateFlow<List<String>>(listOf("Ready."))
     val logs: StateFlow<List<String>> = _logs
 
-    val themeMode = MutableStateFlow("AUTO")
+    // Tracks all checked/cloned profiles for Multi-Clone Cluster Bonding
+    val selectedProfileIds = MutableStateFlow<Set<Int>>(emptySet())
 
-    // SlowDNS Boost Toggle (Controlled from Home Screen before connecting)
+    val themeMode = MutableStateFlow("AUTO")
     val slowDnsBoostEnabled = MutableStateFlow(true)
 
     val sshCompression = MutableStateFlow(false)
@@ -77,10 +77,6 @@ object VpnStateBridge {
         _statusMessage.value = status
     }
 
-    /**
-     * Writes detailed diagnostics ONLY to background Android Logcat,
-     * while keeping the UI Logs screen strictly clean and free of server hosts/credentials.
-     */
     fun addDebugOnlyLog(message: String) {
         Log.d("SmartVPN-Internal", message)
     }
@@ -88,7 +84,7 @@ object VpnStateBridge {
     fun addLog(message: String) {
         Log.d("SmartVPN-Log", message)
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        _logs.value = (_logs.value + "[$time] $message").takeLast(150)
+        _logs.value = (_logs.value + "[$time] $message").takeLast(200)
     }
 
     fun clearLogs() {
@@ -144,7 +140,6 @@ object ConfigCryptoHelper {
             lockedDeviceId = cleanHwid
         )
         val jsonBytes = gson.toJson(exportCopy).toByteArray(Charsets.UTF_8)
-
         val iv = ByteArray(12)
         SecureRandom().nextBytes(iv)
 
@@ -242,24 +237,71 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun selectProfile(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.selectProfile(id)
+            val current = VpnStateBridge.selectedProfileIds.value.toMutableSet()
+            current.add(id)
+            VpnStateBridge.selectedProfileIds.value = current
+        }
+    }
+
+    fun toggleClusterSelection(profile: VpnProfile, checked: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = VpnStateBridge.selectedProfileIds.value.toMutableSet()
+            if (checked) {
+                current.add(profile.id)
+                dao.setSelection(profile.id)
+            } else {
+                current.remove(profile.id)
+            }
+            VpnStateBridge.selectedProfileIds.value = current
+        }
+    }
+
+    fun cloneProfileCluster(target: VpnProfile, cloneCount: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            for (i in 1..cloneCount) {
+                val cloneName = if (cloneCount == 1) "${target.name} (Clone)" else "${target.name} #${i + 1}"
+                dao.insertProfile(target.copy(id = 0, name = cloneName, isSelected = true))
+            }
+            val allAfter = dao.getAllProfiles().firstOrNull().orEmpty()
+            val matchingIds = allAfter
+                .filter { it.server == target.server && it.protocol == target.protocol }
+                .map { it.id }
+                .toSet()
+            VpnStateBridge.selectedProfileIds.value = VpnStateBridge.selectedProfileIds.value + matchingIds
+            if (target.protocol.equals("SLOWDNS", ignoreCase = true)) {
+                VpnStateBridge.slowDnsBoostEnabled.value = true
+            }
+            VpnStateBridge.addLog("Created $cloneCount turbo clone(s) for ${target.name} (${matchingIds.size} bonded).")
         }
     }
 
     fun deleteProfile(profile: VpnProfile) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (VpnStateBridge.connectionState.value != "DISCONNECTED") {
+                VpnStateBridge.addLog("Action blocked: Disconnect VPN before deleting configurations.")
+                return@launch
+            }
             dao.deleteProfile(profile)
+            VpnStateBridge.selectedProfileIds.value = VpnStateBridge.selectedProfileIds.value - profile.id
             VpnStateBridge.addLog("Configuration removed.")
         }
     }
 
     fun saveManualProfile(profile: VpnProfile) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (VpnStateBridge.connectionState.value != "DISCONNECTED") {
+                VpnStateBridge.addLog("Action blocked: Disconnect VPN before editing configurations.")
+                return@launch
+            }
             if (profile.id != 0) {
                 dao.deleteProfile(profile)
             }
-            dao.clearSelection()
             dao.insertProfile(profile.copy(isSelected = true))
-            VpnStateBridge.addLog("Configuration saved.")
+            val latest = dao.getAllProfiles().firstOrNull().orEmpty()
+            latest.lastOrNull()?.let { saved ->
+                VpnStateBridge.selectedProfileIds.value = VpnStateBridge.selectedProfileIds.value + saved.id
+            }
+            VpnStateBridge.addLog("Configuration saved: ${profile.name}")
         }
     }
 
@@ -290,8 +332,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     VpnStateBridge.addLog("HWID Lock Rejected: Unauthorized device.")
                     return@launch
                 }
-                dao.clearSelection()
                 dao.insertProfile(parsed.copy(isSelected = true))
+                val latest = dao.getAllProfiles().firstOrNull().orEmpty()
+                latest.lastOrNull()?.let { saved ->
+                    VpnStateBridge.selectedProfileIds.value = setOf(saved.id)
+                }
                 VpnStateBridge.addLog("Configuration imported: ${parsed.name}")
             } else {
                 VpnStateBridge.addLog("Import rejected: Invalid Hardware ID or passphrase.")
