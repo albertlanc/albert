@@ -1,5 +1,7 @@
 package com.albert.smartvpn.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,10 +15,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.albert.smartvpn.engine.HotshareServer
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,6 +35,7 @@ fun NetworkToolsScreen(
     initialToolPage: String = "PING",
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var activePage by remember(initialToolPage) { mutableStateOf(initialToolPage) }
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
@@ -38,10 +43,10 @@ fun NetworkToolsScreen(
     val toolTabs = listOf(
         "PING" to "Ping Checker",
         "GEOIP" to "My IP & Geo",
+        "HOTSHARE" to "Wi-Fi Hotshare",
         "SSH_SETTINGS" to "Adv. SSH Settings",
         "PAYLOAD_GEN" to "Payload Gen",
-        "SNI_HUNTER" to "SNI Hunter",
-        "HOTSHARE" to "Wi-Fi Hotshare"
+        "SNI_HUNTER" to "SNI Hunter"
     )
 
     Column(
@@ -51,7 +56,6 @@ fun NetworkToolsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Quick Page Switcher Chips
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -145,7 +149,7 @@ fun NetworkToolsScreen(
             }
 
             "GEOIP" -> {
-                var geoResult by remember { mutableStateOf("Tap button below to fetch public IP, ISP,ASN, and Country...") }
+                var geoResult by remember { mutableStateOf("Tap button below to fetch public IP, ISP, ASN, and Country...") }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -195,6 +199,156 @@ fun NetworkToolsScreen(
                 }
             }
 
+            "HOTSHARE" -> {
+                val hotshareEnabled by VpnStateBridge.hotshareEnabled.collectAsState()
+                val detectedIp by VpnStateBridge.hotshareIp.collectAsState()
+                val localSocksPort by VpnStateBridge.localSocksPort.collectAsState()
+                val hotsharePort = HotshareServer.HOTSHARE_PORT
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Wi-Fi Hotspot VPN Share",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if (hotshareEnabled) "ACTIVE • Sharing VPN on $detectedIp:$hotsharePort" else "INACTIVE • Turn on Hotspot & tap Start below",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hotshareEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = hotshareEnabled,
+                                onCheckedChange = { enable ->
+                                    if (enable) {
+                                        HotshareServer.startHotshare(localSocksPort)
+                                    } else {
+                                        HotshareServer.stopHotshare()
+                                    }
+                                }
+                            )
+                        }
+
+                        // Step 1: Open Android System Hotspot Settings
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    val tetherIntent = Intent().apply {
+                                        setClassName("com.android.settings", "com.android.settings.TetherSettings")
+                                    }
+                                    context.startActivity(tetherIntent)
+                                } catch (_: Throwable) {
+                                    try {
+                                        context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+                                    } catch (_: Throwable) {}
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.WifiTethering, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("1. Open Phone Wi-Fi Hotspot Settings")
+                        }
+
+                        // Step 2: Big Toggle Button to Start / Stop Sharing VPN Connection
+                        Button(
+                            onClick = {
+                                if (hotshareEnabled) {
+                                    HotshareServer.stopHotshare()
+                                } else {
+                                    HotshareServer.startHotshare(localSocksPort)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (hotshareEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (hotshareEnabled) Icons.Default.StopCircle else Icons.Default.PlayArrow,
+                                contentDescription = null
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (hotshareEnabled) "STOP SHARING VPN CONNECTION" else "2. START SHARING VPN OVER HOTSPOT",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // Live Proxy Endpoint Box
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "HOTSPOT PROXY DETAILS (HTTP & SOCKS5)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Proxy Host / IP:  $detectedIp\nProxy Port:       $hotsharePort",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(
+                                        onClick = {
+                                            VpnStateBridge.hotshareIp.value = HotshareServer.detectHotspotIpAddress()
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Refresh IP")
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            val shareText = "Connect to my Smart VPN Wi-Fi Hotspot!\nSet Wi-Fi Proxy to Manual:\nHost: $detectedIp\nPort: $hotsharePort"
+                                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                            }
+                                            context.startActivity(Intent.createChooser(sendIntent, "Share Hotspot Details"))
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Share Details")
+                                    }
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "How to connect another phone/PC:\n• Connect the second device to this phone's Wi-Fi Hotspot.\n• On the second device, open Wi-Fi Settings -> Modify Network -> Proxy -> Manual.\n• Enter Hostname: $detectedIp and Port: $hotsharePort -> Save.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             "SSH_SETTINGS" -> {
                 val sshCompression by VpnStateBridge.sshCompression.collectAsState()
                 val autoReconnect by VpnStateBridge.autoReconnect.collectAsState()
@@ -232,7 +386,7 @@ fun NetworkToolsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("SSH Data Compression (Zlib)")
+                            Text("SSH Zlib Compression (Keep OFF for High Speed)")
                             Switch(
                                 checked = sshCompression,
                                 onCheckedChange = { VpnStateBridge.sshCompression.value = it }
@@ -376,7 +530,7 @@ fun NetworkToolsScreen(
                         OutlinedTextField(
                             value = bugHost,
                             onValueChange = { bugHost = it },
-                            label = { Text("Bug Host / SNI Domain") },
+                            label = { Text("Host / SNI Domain") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -485,54 +639,6 @@ fun NetworkToolsScreen(
                             text = scanResult,
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-
-            "HOTSHARE" -> {
-                val hotshareEnabled by VpnStateBridge.hotshareEnabled.collectAsState()
-                val localPort by VpnStateBridge.localSocksPort.collectAsState()
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "Hotshare / Tether VPN over Wi-Fi Hotspot",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Bind Proxy to LAN (0.0.0.0:$localPort)",
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Switch(
-                                checked = hotshareEnabled,
-                                onCheckedChange = {
-                                    VpnStateBridge.hotshareEnabled.value = it
-                                    VpnStateBridge.addLog(
-                                        if (it) "Hotshare LAN Proxy enabled on 0.0.0.0:$localPort"
-                                        else "Hotshare LAN Proxy disabled."
-                                    )
-                                }
-                            )
-                        }
-                        Text(
-                            text = "How to share VPN connection:\n1. Turn on your phone's Wi-Fi Hotspot.\n2. Enable the Hotshare switch above and connect Smart VPN.\n3. On the connected device, set Wi-Fi Proxy to Manual -> Host: 192.168.43.1 (or your hotspot gateway IP) and Port: $localPort.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFB0C4DE)
                         )
                     }
                 }
