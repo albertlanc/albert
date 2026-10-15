@@ -71,18 +71,14 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted) {
-            viewModel.addLog("Note: Enable Notifications in App Settings to see the VPN status bar icon.")
-        }
-    }
+    ) { _ -> }
 
     private val vpnRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             startVpnService()
         } else {
             VpnStateBridge.updateState("DISCONNECTED", "Permission Denied")
-            viewModel.addLog("VPN permission was denied by the user.")
+            viewModel.addLog("Disconnected.")
         }
     }
 
@@ -98,7 +94,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(showSplash) {
                     if (showSplash) {
-                        delay(3200L)
+                        delay(2800L)
                         VpnStateBridge.hasShownSplash = true
                         showSplash = false
                     }
@@ -147,7 +143,10 @@ class MainActivity : ComponentActivity() {
             "AUTO" to "Auto (Morning Light / Night Dark)",
             "CYBER_DARK" to "Theme 1: Cyber Obsidian (Dark)",
             "SOLAR_LIGHT" to "Theme 2: Solar Crystal (Daylight)",
-            "ROYAL_GOLD" to "Theme 3: Royal Amethyst & Gold"
+            "ROYAL_GOLD" to "Theme 3: Royal Amethyst & Gold",
+            "EMERALD_MATRIX" to "Theme 4: Emerald Matrix (Green)",
+            "CRIMSON_PHANTOM" to "Theme 5: Crimson Phantom (Red Ops)",
+            "ARCTIC_FROST" to "Theme 6: Arctic Frost (Ice Light)"
         )
 
         ModalNavigationDrawer(
@@ -179,7 +178,7 @@ class MainActivity : ComponentActivity() {
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = "SSH • 15x SlowDNS • Xray • WG",
+                                    text = "SSH • SlowDNS • Xray • WG • HY2",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -214,7 +213,6 @@ class MainActivity : ComponentActivity() {
                                     IconButton(
                                         onClick = {
                                             clipboardManager.setText(AnnotatedString(deviceId))
-                                            viewModel.addLog("Copied Hardware ID: $deviceId")
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
@@ -323,9 +321,7 @@ class MainActivity : ComponentActivity() {
                                         Uri.parse("package:$packageName")
                                     )
                                     startActivity(intent)
-                                } catch (_: Throwable) {
-                                    viewModel.addLog("Opened Battery Optimization settings.")
-                                }
+                                } catch (_: Throwable) {}
                             }
                         )
 
@@ -393,8 +389,10 @@ class MainActivity : ComponentActivity() {
                                                 Icon(
                                                     imageVector = when (key) {
                                                         "AUTO" -> Icons.Default.BrightnessAuto
-                                                        "SOLAR_LIGHT" -> Icons.Default.WbSunny
+                                                        "SOLAR_LIGHT", "ARCTIC_FROST" -> Icons.Default.WbSunny
                                                         "ROYAL_GOLD" -> Icons.Default.AutoAwesome
+                                                        "EMERALD_MATRIX" -> Icons.Default.Terminal
+                                                        "CRIMSON_PHANTOM" -> Icons.Default.Whatshot
                                                         else -> Icons.Default.DarkMode
                                                     },
                                                     contentDescription = null,
@@ -404,7 +402,6 @@ class MainActivity : ComponentActivity() {
                                             onClick = {
                                                 VpnStateBridge.themeMode.value = key
                                                 showThemeMenu = false
-                                                viewModel.addLog("Applied theme: $label")
                                             }
                                         )
                                     }
@@ -457,7 +454,6 @@ class MainActivity : ComponentActivity() {
                             activeProfile = activeProfile,
                             onToggleConnection = {
                                 if (activeProfile == null) {
-                                    viewModel.addLog("Cannot connect: Select or create a profile in Configs first.")
                                     scope.launch { pagerState.animateScrollToPage(1) }
                                 } else {
                                     toggleVpn(connectionState != "DISCONNECTED")
@@ -507,7 +503,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(Unit) {
             for (i in 1..5) {
                 progressStep = i
-                delay(580L)
+                delay(500L)
             }
         }
 
@@ -616,7 +612,7 @@ class MainActivity : ComponentActivity() {
                             .border(1.dp, Color(0xFF00F0FF).copy(alpha = 0.35f), RoundedCornerShape(14.dp))
                     ) {
                         Text(
-                            text = "Engineered for unrestricted global connectivity, Smart VPN Ultra combines military-grade encryption with 15x SlowDNS Turbo multiplexing, custom SNI fronting, and hardware-locked configurations.",
+                            text = "Engineered for unrestricted global connectivity, Smart VPN Ultra combines military-grade encryption with multi-session turbo multiplexing, custom SNI fronting, and hardware-locked configurations.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFD6E4FF),
                             textAlign = TextAlign.Center,
@@ -634,14 +630,14 @@ class MainActivity : ComponentActivity() {
                     SplashFeatureRow(
                         icon = Icons.Default.Hub,
                         accent = Color(0xFF00F0FF),
-                        title = "8-in-1 Multi-Protocol Core + 15x SlowDNS Boost",
-                        subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, 15x Parallel SlowDNS, VLESS, VMess, Trojan, WireGuard & Hysteria2."
+                        title = "8-in-1 Multi-Protocol Core + SlowDNS Boost",
+                        subtitle = "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, SlowDNS Boost, VLESS, VMess, Trojan, WireGuard & Hysteria2."
                     )
                     SplashFeatureRow(
                         icon = Icons.Default.Bolt,
                         accent = Color(0xFF00E676),
-                        title = "Zero-Rated SNI & DPI Stealth Bypass",
-                        subtitle = "Custom HTTP/WebSocket payload injection, packet splitting, and TLS 1.3 SNI bug host fronting on ports 443 & 80."
+                        title = "4x Multi-Session Turbo & SNI Bypass",
+                        subtitle = "Parallel SSH transport pooling with 8MB windows and TLS 1.3 SNI fronting on ports 443 & 80."
                     )
                     SplashFeatureRow(
                         icon = Icons.Default.Fingerprint,
@@ -756,13 +752,11 @@ class MainActivity : ComponentActivity() {
                 putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Ultra")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, 15x SlowDNS Boost, VLESS/VMess/Trojan, WireGuard & Hysteria2)."
+                    "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, SlowDNS Boost, VLESS/VMess/Trojan, WireGuard & Hysteria2)."
                 )
             }
             startActivity(Intent.createChooser(sendIntent, "Share Smart VPN Ultra"))
-        } catch (t: Throwable) {
-            viewModel.addLog("Share app error: ${t.message}")
-        }
+        } catch (_: Throwable) {}
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -779,7 +773,6 @@ class MainActivity : ComponentActivity() {
 
     private fun toggleVpn(isActiveOrConnecting: Boolean) {
         if (isActiveOrConnecting) {
-            viewModel.addLog("Stopping tunnel...")
             val stopIntent = Intent(this, SmartVpnService::class.java).apply {
                 action = SmartVpnService.ACTION_STOP
             }
@@ -797,7 +790,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVpnService() {
-        VpnStateBridge.updateState("CONNECTING", "Starting engine...")
+        VpnStateBridge.updateState("CONNECTING", "Connecting...")
         val startIntent = Intent(this, SmartVpnService::class.java).apply {
             action = SmartVpnService.ACTION_START
         }
