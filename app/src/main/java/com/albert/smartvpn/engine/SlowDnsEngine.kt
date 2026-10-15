@@ -18,10 +18,19 @@ object SlowDnsEngine {
     private const val BASE_WORKER_PORT = 7001
 
     private val workerProcesses = CopyOnWriteArrayList<Process>()
+    private val activeWorkerPorts = CopyOnWriteArrayList<Int>()
     private var balancerServer: ServerSocket? = null
     private val balancerPool = Executors.newCachedThreadPool()
     private val roundRobinIndex = AtomicInteger(0)
     @Volatile private var isRunning = false
+
+    fun getActiveWorkerPorts(): List<Int> {
+        return if (activeWorkerPorts.isNotEmpty()) {
+            activeWorkerPorts.toList()
+        } else {
+            listOf(7000)
+        }
+    }
 
     private fun normalizePubKeyToHex(rawKey: String): String {
         val trimmed = rawKey.replace(Regex("\\s+"), "")
@@ -79,9 +88,8 @@ object SlowDnsEngine {
         return try {
             isRunning = true
             VpnStateBridge.updateState("CONNECTING", "Connecting...")
-            VpnStateBridge.addLog(if (boostActive) "Connecting (SlowDNS Boost Active)..." else "Connecting...")
+            VpnStateBridge.addLog(if (boostActive) "Connecting (SlowDNS Boost)..." else "Connecting...")
 
-            val activeWorkerPorts = CopyOnWriteArrayList<Int>()
             val resolverAddr = "$primaryDnsIp:$dnsPort"
 
             for (idx in 0 until workerCount) {
@@ -102,7 +110,7 @@ object SlowDnsEngine {
                 workerProcesses.add(proc)
                 activeWorkerPorts.add(workerPort)
 
-                // Drain worker output silently in background
+                // Drain stdout silently so pipe buffers never block
                 balancerPool.execute {
                     try {
                         val ins = proc.inputStream
@@ -112,6 +120,7 @@ object SlowDnsEngine {
                 }
             }
 
+            // Also keep port 7000 bound as a round-robin fallback balancer
             balancerServer = ServerSocket()
             balancerServer?.reuseAddress = true
             balancerServer?.bind(InetSocketAddress("127.0.0.1", localPort), 128)
@@ -133,7 +142,7 @@ object SlowDnsEngine {
                 }
             }
 
-            Thread.sleep(900)
+            Thread.sleep(750)
 
             val aliveCount = workerProcesses.count { it.isAlive }
             if (aliveCount > 0) {
@@ -210,6 +219,7 @@ object SlowDnsEngine {
         isRunning = false
         try { balancerServer?.close() } catch (_: Throwable) {}
         balancerServer = null
+        activeWorkerPorts.clear()
 
         val procs = ArrayList(workerProcesses)
         workerProcesses.clear()
