@@ -16,8 +16,13 @@ android {
         applicationId = "com.albert.smartvpn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "5.0"
+
+        // Excludes x86 / x86_64 PC emulator binaries to reduce APK size by ~60%
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildFeatures {
@@ -37,39 +42,34 @@ android {
         jvmTarget = "17"
     }
 
-    // Ensures unstripped native engines (.so files) are extracted and loaded cleanly
     packaging {
         jniLibs {
             useLegacyPackaging = true
+        }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1,DEPENDENCIES,LICENSE*,NOTICE*}"
         }
     }
 }
 
 dependencies {
-    // Local Native Engines (libXray.aar and hev-socks5-tunnel)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
 
-    // Jetpack Compose UI
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Room Database & SQLCipher (Encrypted Storage)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
     implementation("net.zetetic:sqlcipher-android:4.5.4")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
 
-    // Settings DataStore
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-
-    // Gson for JSON Parsing (Xray configs)
     implementation("com.google.code.gson:gson:2.10.1")
-
-    // SSH Engine
     implementation("com.hierynomus:sshj:0.37.0")
 }
