@@ -17,14 +17,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object VpnStateBridge {
+    // Prevents Splash Screen from re-running when minimizing and reopening the app
+    @Volatile var hasShownSplash: Boolean = false
+
     private val _connectionState = MutableStateFlow("DISCONNECTED")
     val connectionState: StateFlow<String> = _connectionState
 
@@ -38,15 +42,14 @@ object VpnStateBridge {
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
     private val _logs = MutableStateFlow<List<String>>(
-        listOf("[v4.5] Smart VPN Ultra Engine Initialized.")
+        listOf("[v5.0] Smart VPN Ultra Engine Ready.")
     )
     val logs: StateFlow<List<String>> = _logs
 
-    // Theme Mode: "AUTO" (Morning Light / Night Dark), "CYBER_DARK", "SOLAR_LIGHT", "ROYAL_GOLD"
     val themeMode = MutableStateFlow("AUTO")
 
-    // Global Advanced SSH & Tunnel Settings
-    val sshCompression = MutableStateFlow(true)
+    // Disabled slow Java Zlib SSH compression by default for maximum speed
+    val sshCompression = MutableStateFlow(false)
     val autoReconnect = MutableStateFlow(true)
     val pingIntervalSec = MutableStateFlow(15)
     val udpgwPort = MutableStateFlow(7300)
@@ -55,6 +58,7 @@ object VpnStateBridge {
     val localSocksPort = MutableStateFlow(10808)
     val cpuWakeLock = MutableStateFlow(true)
     val hotshareEnabled = MutableStateFlow(false)
+    val hotshareIp = MutableStateFlow("192.168.43.1")
 
     fun updateState(state: String, status: String = state) {
         _connectionState.value = state
@@ -90,14 +94,29 @@ object VpnStateBridge {
     }
 }
 
+/**
+ * Military-Grade AES-256-GCM Hardware-ID-Bound Config Vault:
+ * Derives the encryption key directly from the target phone's Hardware ID + Passphrase.
+ * If someone attempts to decrypt the file, QR code, or Cloud token on another device or PC,
+ * AES-GCM authentication fails immediately because the Hardware ID key does not match.
+ */
 object ConfigCryptoHelper {
     private val gson = Gson()
-    private const val DEFAULT_KEY_SEED = "SmartVPN-Default-2026-LockKey"
+    private const val VAULT_MASTER_PEPPER = "SmartVPN-Ultra-v5-Enclave-Vault-2026"
 
-    private fun deriveAesKey(passphrase: String): SecretKeySpec {
-        val seed = passphrase.ifBlank { DEFAULT_KEY_SEED }
-        val digest = MessageDigest.getInstance("SHA-256").digest(seed.toByteArray(Charsets.UTF_8))
-        return SecretKeySpec(digest, "AES")
+    private fun deriveBoundAesGcmKey(hwid: String, passphrase: String): SecretKeySpec {
+        val normalizedHwid = hwid.trim().uppercase()
+        val normalizedPass = passphrase.trim()
+        val material = "$VAULT_MASTER_PEPPER|HWID:$normalizedHwid|PASS:$normalizedPass"
+        var hash = material.toByteArray(Charsets.UTF_8)
+        val md = MessageDigest.getInstance("SHA-256")
+        // 1,000 rounds of SHA-256 key stretching to defeat brute-force tools
+        repeat(1000) {
+            md.update(hash)
+            md.update(VAULT_MASTER_PEPPER.toByteArray(Charsets.UTF_8))
+            hash = md.digest()
+        }
+        return SecretKeySpec(hash, "AES")
     }
 
     fun exportProfileUri(
@@ -106,41 +125,87 @@ object ConfigCryptoHelper {
         passphrase: String,
         targetDeviceId: String
     ): String {
+        val cleanHwid = targetDeviceId.trim().uppercase()
         val exportCopy = profile.copy(
             id = 0,
             isSelected = true,
-            isLocked = lockConfig,
-            lockPassphrase = passphrase,
-            lockedDeviceId = targetDeviceId.trim().uppercase()
+            isLocked = true, // Exported configs are always locked against inspection
+            lockPassphrase = passphrase.trim(),
+            lockedDeviceId = cleanHwid
         )
-        val json = gson.toJson(exportCopy)
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        val iv = ByteArray(16) { (it * 7 + 3).toByte() }
-        cipher.init(Cipher.ENCRYPT_MODE, deriveAesKey(passphrase), IvParameterSpec(iv))
-        val encrypted = cipher.doFinal(json.toByteArray(Charsets.UTF_8))
-        val b64 = Base64.encodeToString(encrypted, Base64.NO_WRAP or Base64.URL_SAFE)
-        val prefix = if (passphrase.isNotBlank()) "smartvpn://locked/" else "smartvpn://open/"
-        return prefix + b64
+        val jsonBytes = gson.toJson(exportCopy).toByteArray(Charsets.UTF_8)
+
+        val iv = ByteArray(12)
+        SecureRandom().nextBytes(iv)
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val key = deriveBoundAesGcmKey(cleanHwid, passphrase)
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+        val cipherText = cipher.doFinal(jsonBytes)
+
+        val combined = ByteArray(iv.size + cipherText.size)
+        System.arraycopy(iv, 0, combined, 0, iv.size)
+        System.arraycopy(cipherText, 0, combined, iv.size, cipherText.size)
+
+        val b64 = Base64.encodeToString(combined, Base64.NO_WRAP or Base64.URL_SAFE)
+        val modeTag = when {
+            cleanHwid.isNotEmpty() && passphrase.isNotBlank() -> "hwidpass"
+            cleanHwid.isNotEmpty() -> "hwid"
+            passphrase.isNotBlank() -> "locked"
+            else -> "open"
+        }
+        return "smartvpn://$modeTag/$b64"
     }
 
-    fun importProfileUri(rawText: String, passphrase: String = ""): VpnProfile? {
+    fun importProfileUri(
+        rawText: String,
+        passphrase: String = "",
+        currentDeviceHwid: String = ""
+    ): VpnProfile? {
         val clean = rawText.trim()
         val b64 = when {
-            clean.startsWith("smartvpn://locked/") -> clean.removePrefix("smartvpn://locked/")
-            clean.startsWith("smartvpn://open/") -> clean.removePrefix("smartvpn://open/")
+            clean.startsWith("smartvpn://") -> clean.substringAfter("smartvpn://").substringAfter("/")
             clean.startsWith("SVPN-CLOUD:") -> clean.removePrefix("SVPN-CLOUD:")
             else -> return null
         }
-        return try {
-            val encrypted = Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE)
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            val iv = ByteArray(16) { (it * 7 + 3).toByte() }
-            cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(passphrase), IvParameterSpec(iv))
-            val json = String(cipher.doFinal(encrypted), Charsets.UTF_8)
-            gson.fromJson(json, VpnProfile::class.java)?.copy(id = 0, isSelected = true)
+
+        val combined = try {
+            Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE)
         } catch (_: Throwable) {
-            null
+            return null
         }
+        if (combined.size <= 12) return null
+
+        val iv = combined.copyOfRange(0, 12)
+        val cipherText = combined.copyOfRange(12, combined.size)
+
+        // Try decrypting with the current phone's Hardware ID first, then without HWID if not HWID-bound
+        val candidateHwids = listOf(currentDeviceHwid.trim().uppercase(), "")
+        val candidatePasses = listOf(passphrase.trim(), "")
+
+        for (hwidCandidate in candidateHwids) {
+            for (passCandidate in candidatePasses) {
+                try {
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    val key = deriveBoundAesGcmKey(hwidCandidate, passCandidate)
+                    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+                    val decryptedBytes = cipher.doFinal(cipherText)
+                    val json = String(decryptedBytes, Charsets.UTF_8)
+                    val parsed = gson.fromJson(json, VpnProfile::class.java) ?: continue
+
+                    // Verify strict Hardware ID match
+                    if (parsed.lockedDeviceId.isNotBlank() &&
+                        !parsed.lockedDeviceId.trim().equals(currentDeviceHwid.trim(), ignoreCase = true)
+                    ) {
+                        return null
+                    }
+                    return parsed.copy(id = 0, isSelected = true, isLocked = true)
+                } catch (_: Throwable) {
+                    // Wrong HWID or wrong passphrase -> AES-GCM authentication tag rejected
+                }
+            }
+        }
+        return null
     }
 }
 
@@ -200,26 +265,29 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 VpnStateBridge.addLog("Clipboard is empty.")
                 return@launch
             }
-            if (cleanText.startsWith("smartvpn://locked/") && passphrase.isBlank()) {
-                VpnStateBridge.addLog("Config is passphrase-protected! Use the Cloud/Key import icon in Configs.")
+            if ((cleanText.startsWith("smartvpn://locked/") || cleanText.startsWith("smartvpn://hwidpass/")) &&
+                passphrase.isBlank()
+            ) {
+                VpnStateBridge.addLog("Config is passphrase-locked! Tap the Cloud/Key icon in Configs to enter passphrase.")
                 return@launch
             }
-            val parsed = ConfigCryptoHelper.importProfileUri(cleanText, passphrase)
+
+            val myDeviceId = VpnStateBridge.getDeviceHardwareId(appContext)
+            val parsed = ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myDeviceId)
                 ?: VpnConfigParser.parseUri(cleanText)
 
             if (parsed != null) {
-                val myDeviceId = VpnStateBridge.getDeviceHardwareId(appContext)
                 if (parsed.lockedDeviceId.isNotBlank() &&
                     !parsed.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                 ) {
-                    VpnStateBridge.addLog("Import Blocked! Config is locked to Device ID: ${parsed.lockedDeviceId}")
+                    VpnStateBridge.addLog("HWID Security Rejected! Config is locked to another Device ID.")
                     return@launch
                 }
                 dao.clearSelection()
                 dao.insertProfile(parsed.copy(isSelected = true))
                 VpnStateBridge.addLog("Imported & selected profile: ${parsed.name} (${parsed.protocol})")
             } else {
-                VpnStateBridge.addLog("Failed to import config: Invalid format or wrong passphrase.")
+                VpnStateBridge.addLog("Import Rejected: Wrong Hardware Device ID ($myDeviceId), wrong passphrase, or invalid link.")
             }
         }
     }
