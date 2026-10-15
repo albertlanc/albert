@@ -52,7 +52,11 @@ object SlowDnsEngine {
     ): Boolean {
         stopSlowDns()
 
-        val rawDnsHost = dnsServerIp.trim().ifEmpty { "8.8.8.8" }.substringBefore(":")
+        val rawInput = dnsServerIp.trim().ifEmpty { "8.8.8.8" }
+        val rawDnsHost = rawInput.substringBefore(":")
+        val customInlinePort = rawInput.substringAfter(":", "").toIntOrNull()
+        val effectivePort = customInlinePort ?: if (dnsPort in 1..65535) dnsPort else 53
+
         val cleanNs = nsDomain.trim()
         val cleanPubKey = normalizePubKeyToHex(pubKey)
 
@@ -75,8 +79,8 @@ object SlowDnsEngine {
             rawDnsHost
         }
 
-        val boostActive = VpnStateBridge.slowDnsBoostEnabled.value
-        val workerCount = if (boostActive) BOOST_INSTANCES else 1
+        // Automatically turn ON SlowDNS Boost when a SlowDNS file connects
+        VpnStateBridge.slowDnsBoostEnabled.value = true
 
         return try {
             isRunning = true
@@ -84,17 +88,17 @@ object SlowDnsEngine {
             VpnStateBridge.addLog("Connecting...")
 
             val activeWorkerPorts = CopyOnWriteArrayList<Int>()
-            val resolverAddr = "$primaryDnsIp:$dnsPort"
+            val resolverAddr = "$primaryDnsIp:$effectivePort"
 
-            for (idx in 0 until workerCount) {
+            for (idx in 0 until BOOST_INSTANCES) {
                 val workerPort = BASE_WORKER_PORT + idx
                 val workerListen = "127.0.0.1:$workerPort"
 
                 val cmd = when {
-                    rawDnsHost.startsWith("https://", true) ->
-                        listOf(dnsttBin.absolutePath, "-doh", dnsServerIp.trim(), "-pubkey", cleanPubKey, cleanNs, workerListen)
-                    rawDnsHost.startsWith("tls://", true) ->
-                        listOf(dnsttBin.absolutePath, "-dot", dnsServerIp.trim().removePrefix("tls://"), "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    rawInput.startsWith("https://", true) ->
+                        listOf(dnsttBin.absolutePath, "-doh", rawInput, "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    rawInput.startsWith("tls://", true) ->
+                        listOf(dnsttBin.absolutePath, "-dot", rawInput.removePrefix("tls://"), "-pubkey", cleanPubKey, cleanNs, workerListen)
                     else ->
                         listOf(dnsttBin.absolutePath, "-udp", resolverAddr, "-pubkey", cleanPubKey, cleanNs, workerListen)
                 }
@@ -117,13 +121,14 @@ object SlowDnsEngine {
                 bind(InetSocketAddress("127.0.0.1", localPort), 128)
             }
 
-            thread(start = true, name = "SlowDNS-Balancer") {
+            thread(start = true, name = "SlowDNS-BBR-Balancer") {
                 while (isRunning) {
                     try {
                         val clientSock = balancerServer?.accept() ?: break
                         clientSock.tcpNoDelay = true
-                        clientSock.sendBufferSize = 131072
-                        clientSock.receiveBufferSize = 131072
+                        clientSock.trafficClass = 0x18
+                        clientSock.sendBufferSize = 262144
+                        clientSock.receiveBufferSize = 262144
 
                         balancerPool.execute {
                             bridgeToBoostWorker(clientSock, activeWorkerPorts)
@@ -166,8 +171,9 @@ object SlowDnsEngine {
 
             workerSock = Socket().apply {
                 tcpNoDelay = true
-                sendBufferSize = 131072
-                receiveBufferSize = 131072
+                trafficClass = 0x18
+                sendBufferSize = 262144
+                receiveBufferSize = 262144
                 connect(InetSocketAddress("127.0.0.1", targetPort), 5000)
             }
 
@@ -178,12 +184,11 @@ object SlowDnsEngine {
 
             val upstreamJob = balancerPool.submit {
                 try {
-                    val buf = ByteArray(65536)
+                    val buf = ByteArray(131072)
                     while (isRunning) {
                         val n = cIn.read(buf)
                         if (n == -1) break
                         wOut.write(buf, 0, n)
-                        if (cIn.available() == 0) wOut.flush()
                     }
                     wOut.flush()
                 } catch (_: Throwable) {
@@ -192,12 +197,11 @@ object SlowDnsEngine {
                 }
             }
 
-            val buf = ByteArray(65536)
+            val buf = ByteArray(131072)
             while (isRunning) {
                 val n = wIn.read(buf)
                 if (n == -1) break
                 cOut.write(buf, 0, n)
-                if (wIn.available() == 0) cOut.flush()
             }
             cOut.flush()
             upstreamJob.cancel(true)
@@ -210,6 +214,8 @@ object SlowDnsEngine {
 
     fun stopSlowDns() {
         isRunning = false
+        // Automatically turn OFF SlowDNS Boost when stopped
+        VpnStateBridge.slowDnsBoostEnabled.value = false
         try { balancerServer?.close() } catch (_: Throwable) {}
         balancerServer = null
 
