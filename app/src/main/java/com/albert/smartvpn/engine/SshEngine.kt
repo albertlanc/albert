@@ -132,7 +132,7 @@ object SshEngine {
             if (VpnStateBridge.sshCompression.value) {
                 try { useCompression() } catch (_: Throwable) {}
             }
-            connection.windowSize = 8388608L
+            connection.windowSize = 16777216L // 16 MB BBR Window
             connection.maxPacketSize = 65536
             connection.keepAlive.keepAliveInterval = VpnStateBridge.pingIntervalSec.value.coerceIn(5, 120)
 
@@ -185,11 +185,7 @@ object SshEngine {
                 isRunning = true
                 startLocalSocks5Server("127.0.0.1", localPort)
 
-                val extraSessions = when {
-                    isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value -> 5
-                    !isSlowDns -> 3
-                    else -> 0
-                }
+                val extraSessions = if (isSlowDns) 5 else 3
                 for (i in 1..extraSessions) {
                     ioThreadPool.execute {
                         try {
@@ -245,6 +241,7 @@ object SshEngine {
                     setPerformancePreferences(0, 1, 2)
                     tcpNoDelay = true
                     keepAlive = true
+                    trafficClass = 0x18 // BBR Low-Delay + High-Throughput DSCP
                     sendBufferSize = 524288
                     receiveBufferSize = 524288
                     connect(InetSocketAddress(tcpHost, tcpPort), 15000)
@@ -268,9 +265,9 @@ object SshEngine {
 
                 if (mode == "SSH+SSL") {
                     val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, false)
-                    val pushbackIn = PushbackInputStream(sslSock.getInputStream(), 32768)
+                    val pushbackIn = PushbackInputStream(sslSock.getInputStream(), 65536)
                     val prevTimeout = sslSock.soTimeout
-                    sslSock.soTimeout = 1200
+                    sslSock.soTimeout = 1000
                     try {
                         val peek = ByteArray(16)
                         val n = pushbackIn.read(peek)
@@ -299,7 +296,7 @@ object SshEngine {
                     } catch (_: Throwable) {
                         try { sslSock.close() } catch (_: Throwable) {}
                         val fbSsl = openSslSocket(tcpHost, tcpPort, sniHost, true)
-                        val fbIn = PushbackInputStream(fbSsl.getInputStream(), 32768)
+                        val fbIn = PushbackInputStream(fbSsl.getInputStream(), 65536)
                         val wsReq = "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
                         fbSsl.getOutputStream().apply {
                             write(wsReq.toByteArray(Charsets.UTF_8))
@@ -318,40 +315,21 @@ object SshEngine {
                 }
 
                 val activeSocket: Socket = if (shouldUseTls) {
-                    openSslSocket(tcpHost, tcpPort, sniHost, false)
+                    // Force HTTP/1.1 ALPN immediately when payload is used so WS upgrades never lag
+                    openSslSocket(tcpHost, tcpPort, sniHost, payloadTemplate.isNotBlank())
                 } else {
                     Socket().apply {
                         setPerformancePreferences(0, 1, 2)
                         tcpNoDelay = true
                         keepAlive = true
+                        trafficClass = 0x18
                         sendBufferSize = 524288
                         receiveBufferSize = 524288
                         connect(InetSocketAddress(tcpHost, tcpPort), 15000)
                     }
                 }
 
-                val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 32768)
-
-                if (shouldUseTls) {
-                    val prevTimeout = activeSocket.soTimeout
-                    activeSocket.soTimeout = 400
-                    try {
-                        val peek = ByteArray(16)
-                        val n = pushbackIn.read(peek)
-                        if (n > 0) {
-                            val str = String(peek, 0, n, Charsets.ISO_8859_1)
-                            pushbackIn.unread(peek, 0, n)
-                            if (str.startsWith("SSH-")) {
-                                if (emitUiLogs) VpnStateBridge.addLog("HTTP/1.1 200 OK")
-                                activeSocket.soTimeout = prevTimeout
-                                return PushbackWrappedSocket(activeSocket, pushbackIn)
-                            }
-                        }
-                    } catch (_: SocketTimeoutException) {
-                    } finally {
-                        activeSocket.soTimeout = prevTimeout
-                    }
-                }
+                val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 65536)
 
                 if (payloadTemplate.isNotBlank()) {
                     val norm = if (mode == "SSH+WS+SNI+PAYLOAD") {
@@ -366,11 +344,11 @@ object SshEngine {
                         if (chunk.isNotEmpty()) {
                             out.write(chunk.toByteArray(Charsets.UTF_8))
                             out.flush()
-                            if (idx < chunks.size - 1) Thread.sleep(40)
+                            if (idx < chunks.size - 1) Thread.sleep(25)
                         }
                     }
                     val prevTimeout = activeSocket.soTimeout
-                    activeSocket.soTimeout = 12000
+                    activeSocket.soTimeout = 10000
                     try { consumeHttpUpgrade(pushbackIn, emitUiLogs) } finally { activeSocket.soTimeout = prevTimeout }
                 }
                 return PushbackWrappedSocket(activeSocket, pushbackIn)
@@ -470,7 +448,7 @@ object SshEngine {
     }
 
     private fun openSshForwardSocket(targetHost: String, targetPort: Int): Pair<ServerSocket, Socket> {
-        val bridgeServer = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+        val bridgeServer = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val bridgePort = bridgeServer.localPort
         activeBridges.add(bridgeServer)
 
@@ -482,9 +460,10 @@ object SshEngine {
 
         val bridgeSocket = Socket().apply {
             tcpNoDelay = true
-            sendBufferSize = 262144
-            receiveBufferSize = 262144
-            connect(InetSocketAddress("127.0.0.1", bridgePort), 10000)
+            trafficClass = 0x18
+            sendBufferSize = 524288
+            receiveBufferSize = 524288
+            connect(InetSocketAddress("127.0.0.1", bridgePort), 8000)
         }
         return Pair(bridgeServer, bridgeSocket)
     }
@@ -494,6 +473,9 @@ object SshEngine {
         var bridgeSocket: Socket? = null
         try {
             client.tcpNoDelay = true
+            client.trafficClass = 0x18
+            client.sendBufferSize = 524288
+            client.receiveBufferSize = 524288
             val ins = client.getInputStream()
             val outs = client.getOutputStream()
 
@@ -533,14 +515,14 @@ object SshEngine {
             val sshIn = bridgeSocket.getInputStream()
             val sshOut = bridgeSocket.getOutputStream()
 
+            // Zero-syscall 128 KB BBR Stream Pipeline (no ins.available() bottleneck)
             val upFuture = ioThreadPool.submit {
                 try {
-                    val buf = ByteArray(65536)
+                    val buf = ByteArray(131072)
                     while (isRunning) {
                         val n = ins.read(buf)
                         if (n == -1) break
                         sshOut.write(buf, 0, n)
-                        if (ins.available() == 0) sshOut.flush()
                     }
                     sshOut.flush()
                 } catch (_: Throwable) {
@@ -549,12 +531,11 @@ object SshEngine {
                 }
             }
 
-            val buf = ByteArray(65536)
+            val buf = ByteArray(131072)
             while (isRunning) {
                 val n = sshIn.read(buf)
                 if (n == -1) break
                 outs.write(buf, 0, n)
-                if (sshIn.available() == 0) outs.flush()
             }
             outs.flush()
             upFuture.cancel(true)
