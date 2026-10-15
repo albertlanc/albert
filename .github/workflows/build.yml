@@ -89,10 +89,10 @@ jobs:
       - name: Build Debug APK
         run: |
           gradle assembleDebug --stacktrace
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SmartVPN-v6.0.apk
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SmartVPN-v6.0-BBR.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartVPN-v6.0
-          path: app/build/outputs/apk/debug/SmartVPN-v6.0.apk
+          name: SmartVPN-v6.0-BBR
+          path: app/build/outputs/apk/debug/SmartVPN-v6.0-BBR.apk
