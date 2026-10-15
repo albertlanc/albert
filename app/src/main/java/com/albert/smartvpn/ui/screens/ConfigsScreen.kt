@@ -106,7 +106,7 @@ fun ConfigsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Tap + to build SSH, SSH+WS+SNI+Payload (443/80), SlowDNS (15x Boost), VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
+                        text = "Tap + to build SSH, SSH+WS+SNI+Payload (443/80), SlowDNS, VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -169,7 +169,7 @@ fun ConfigsScreen(
                                 Text(
                                     text = when {
                                         profile.isLocked -> "${profile.protocol} • [Hardware-Locked Enclave]"
-                                        profile.protocol == "SLOWDNS" -> "SLOWDNS (15x Boost) • NS: ${profile.slowDnsDomain}"
+                                        profile.protocol == "SLOWDNS" -> "SLOWDNS • NS: ${profile.slowDnsDomain}"
                                         else -> "${profile.protocol} • ${profile.server}:${profile.port}"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
@@ -314,7 +314,7 @@ fun ProtocolConfigDialog(
         "SSH+WS+SNI+PAYLOAD" to "SSH + WS + SNI + Payload (Port 443 / 80)",
         "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload/Proxy)",
         "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443 / 8080)",
-        "SLOWDNS" to "SlowDNS (15x Boost DNSTT - UDP 53)",
+        "SLOWDNS" to "SlowDNS (DNSTT Tunnel)",
         "VLESS" to "VLESS (TLS 443 / noTLS 80)",
         "VMESS" to "VMess (TLS 443 / noTLS 80)",
         "TROJAN" to "Trojan (TLS 443 / noTLS 80)",
@@ -812,7 +812,7 @@ fun ProtocolConfigDialog(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Text(
-                                        text = "3. SlowDNS 15x Turbo Boost Settings (UDP Port 53)",
+                                        text = "3. SlowDNS Settings",
                                         style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -1298,10 +1298,7 @@ fun ShareAndLockDialog(
                                 putExtra(Intent.EXTRA_TEXT, encryptedUri)
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share Encrypted .svpn File"))
-                            VpnStateBridge.addLog("Exported HWID-bound ${profile.name}.svpn")
-                        } catch (t: Throwable) {
-                            VpnStateBridge.addLog("Share error: ${t.message}")
-                        }
+                        } catch (_: Throwable) {}
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -1313,7 +1310,6 @@ fun ShareAndLockDialog(
                 OutlinedButton(
                     onClick = {
                         clipboardManager.setText(AnnotatedString(encryptedUri))
-                        VpnStateBridge.addLog("Copied HWID + Passphrase encrypted link.")
                         onDismiss()
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -1326,7 +1322,6 @@ fun ShareAndLockDialog(
                 OutlinedButton(
                     onClick = {
                         clipboardManager.setText(AnnotatedString(cloudToken))
-                        VpnStateBridge.addLog("Copied HWID-bound SVPN-CLOUD token.")
                         onDismiss()
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -1496,11 +1491,11 @@ fun ImportAdvancedDialog(
                     ) {
                         errorMsg = "HWID Mismatch: Config is locked to another device."
                     } else {
-                        VpnStateBridge.addLog("Decrypted & imported config: ${parsed.name}")
+                        VpnStateBridge.addLog("Configuration imported: ${parsed.name}")
                         onImportSuccess(parsed)
                     }
                 } else {
-                    errorMsg = "Decryption Rejected! Hardware ID ($myDeviceId) or Passphrase does not match this config."
+                    errorMsg = "Decryption Rejected! Hardware ID ($myDeviceId) or Passphrase does not match."
                 }
             }) {
                 Text("Unlock & Import")
