@@ -92,7 +92,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SmartVpnTheme {
-                // Only show splash screen on initial cold launch when not already connected
                 var showSplash by remember {
                     mutableStateOf(!VpnStateBridge.hasShownSplash && !VpnStateBridge.isConnected.value)
                 }
@@ -187,7 +186,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // Hardware Device ID Box
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(12.dp),
@@ -371,7 +369,6 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         actions = {
-                            // Theme selector lives ONLY here on the top toggle bar
                             Box {
                                 IconButton(onClick = { showThemeMenu = true }) {
                                     Icon(
@@ -448,7 +445,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             ) { innerPadding ->
-                // Swipeable HorizontalPager across all 4 menus
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
