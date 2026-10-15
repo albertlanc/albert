@@ -52,7 +52,7 @@ fun ConfigsScreen(
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var sharingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var unlockPromptProfile by remember { mutableStateOf<VpnProfile?>(null) }
-    var unlockActionType by remember { mutableStateOf("EDIT") } // "EDIT" or "SHARE"
+    var unlockActionType by remember { mutableStateOf("EDIT") }
     var showImportModal by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -184,7 +184,6 @@ fun ConfigsScreen(
                                 }
                             }
                             Row {
-                                // Prevent re-exporting a locked config unless creator unlocks it first
                                 IconButton(onClick = {
                                     if (profile.isLocked) {
                                         unlockActionType = "SHARE"
