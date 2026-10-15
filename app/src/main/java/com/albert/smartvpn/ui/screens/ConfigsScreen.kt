@@ -3,6 +3,7 @@ package com.albert.smartvpn.ui.screens
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -48,6 +49,10 @@ fun ConfigsScreen(
     modifier: Modifier = Modifier
 ) {
     val clipboardManager = LocalClipboardManager.current
+    val connectionState by VpnStateBridge.connectionState.collectAsState()
+    val slowDnsBoostEnabled by VpnStateBridge.slowDnsBoostEnabled.collectAsState()
+    val isTunnelBusy = connectionState != "DISCONNECTED"
+
     var showConfigDialog by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var sharingProfile by remember { mutableStateOf<VpnProfile?>(null) }
@@ -55,7 +60,7 @@ fun ConfigsScreen(
     var unlockPromptProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var unlockActionType by remember { mutableStateOf("EDIT") }
     var showImportModal by remember { mutableStateOf(false) }
-    val multiSelectedIds = remember { mutableStateListOf<Int>() }
+    var showConnectedEditBlockAlert by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier,
@@ -84,98 +89,181 @@ fun ConfigsScreen(
             }
         }
     ) { padding ->
-        if (profiles.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // SLOWDNS SPEED BOOST TOGGLE CARD (IN CONFIGS, DEFAULT OFF, AUTO-ON ONLY WHEN SLOWDNS CONNECTS)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .border(
+                        width = 1.dp,
+                        color = if (slowDnsBoostEnabled) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                        shape = RoundedCornerShape(14.dp)
+                    ),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No configurations saved", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Tap + to build SSH, SSH+WS+SNI+Payload, SlowDNS, VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = Icons.Default.RocketLaunch,
+                            contentDescription = null,
+                            tint = if (slowDnsBoostEnabled) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "SlowDNS Speed Boost",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (slowDnsBoostEnabled) {
+                                    "ACTIVE • Auto-engaged for connected SlowDNS tunnel"
+                                } else {
+                                    "STANDBY (OFF) • Auto-turns ON when SlowDNS connects"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (slowDnsBoostEnabled) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = slowDnsBoostEnabled,
+                        onCheckedChange = null,
+                        enabled = false
                     )
                 }
             }
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-                items(profiles) { profile: VpnProfile ->
-                    val isMultiChecked = profile.isSelected || multiSelectedIds.contains(profile.id)
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .clickable {
-                                onSelectProfile(profile)
-                                if (!multiSelectedIds.contains(profile.id)) multiSelectedIds.add(profile.id)
-                            },
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isMultiChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+
+            if (profiles.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No configurations saved", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Tap + to build SSH, SSH+WS+SNI+Payload, SlowDNS (Any Port), VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Checkbox(
-                                checked = isMultiChecked,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        if (!multiSelectedIds.contains(profile.id)) multiSelectedIds.add(profile.id)
+                    }
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(profiles) { profile: VpnProfile ->
+                        val isCurrentlyConnectedProfile = isTunnelBusy && profile.isSelected
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clickable {
+                                    if (!isTunnelBusy) {
                                         onSelectProfile(profile)
-                                        if (profile.protocol == "SLOWDNS") VpnStateBridge.slowDnsBoostEnabled.value = true
-                                    } else {
-                                        multiSelectedIds.remove(profile.id)
                                     }
-                                }
+                                },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (profile.isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                             )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (profile.isLocked) {
-                                        Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                RadioButton(
+                                    selected = profile.isSelected,
+                                    onClick = {
+                                        if (!isTunnelBusy) onSelectProfile(profile)
                                     }
-                                    Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                    if (profile.isSelected) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("ACTIVE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF00E676), fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = when {
-                                        profile.isLocked -> "${profile.protocol} • [Hardware-Locked Enclave]"
-                                        profile.protocol == "SLOWDNS" -> "SLOWDNS • NS: ${profile.slowDnsDomain}"
-                                        else -> "${profile.protocol} • ${profile.server}:${profile.port}"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            }
-                            Row {
-                                IconButton(onClick = { cloningProfile = profile }) {
-                                    Icon(Icons.Default.CopyAll, contentDescription = "Clone")
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (profile.isLocked) {
+                                            Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        }
+                                        Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        if (profile.isSelected) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = if (isCurrentlyConnectedProfile) "CONNECTED" else "SELECTED",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF00E676),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = when {
+                                            profile.isLocked -> "${profile.protocol} • [Hardware-Locked Enclave]"
+                                            profile.protocol == "SLOWDNS" -> "SLOWDNS (Port ${profile.port}) • NS: ${profile.slowDnsDomain}"
+                                            else -> "${profile.protocol} • ${profile.server}:${profile.port}"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                                IconButton(onClick = {
-                                    if (profile.isLocked) { unlockActionType = "SHARE"; unlockPromptProfile = profile }
-                                    else sharingProfile = profile
-                                }) {
-                                    Icon(Icons.Default.Share, contentDescription = "Share")
-                                }
-                                IconButton(onClick = {
-                                    if (profile.isLocked) { unlockActionType = "EDIT"; unlockPromptProfile = profile }
-                                    else { editingProfile = profile; showConfigDialog = true }
-                                }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit")
-                                }
-                                IconButton(onClick = {
-                                    multiSelectedIds.remove(profile.id)
-                                    onDeleteProfile(profile)
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                Row {
+                                    IconButton(onClick = { cloningProfile = profile }) {
+                                        Icon(Icons.Default.CopyAll, contentDescription = "Clone")
+                                    }
+                                    IconButton(onClick = {
+                                        if (profile.isLocked) { unlockActionType = "SHARE"; unlockPromptProfile = profile }
+                                        else sharingProfile = profile
+                                    }) {
+                                        Icon(Icons.Default.Share, contentDescription = "Share")
+                                    }
+                                    // BLOCK EDITING WHEN THIS PROFILE IS CURRENTLY CONNECTED
+                                    IconButton(onClick = {
+                                        if (isCurrentlyConnectedProfile) {
+                                            showConnectedEditBlockAlert = true
+                                        } else if (profile.isLocked) {
+                                            unlockActionType = "EDIT"
+                                            unlockPromptProfile = profile
+                                        } else {
+                                            editingProfile = profile
+                                            showConfigDialog = true
+                                        }
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit",
+                                            tint = if (isCurrentlyConnectedProfile) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else LocalContentColor.current
+                                        )
+                                    }
+                                    IconButton(onClick = {
+                                        if (isCurrentlyConnectedProfile) {
+                                            showConnectedEditBlockAlert = true
+                                        } else {
+                                            onDeleteProfile(profile)
+                                        }
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete",
+                                            tint = if (isCurrentlyConnectedProfile) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else LocalContentColor.current
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -185,24 +273,36 @@ fun ConfigsScreen(
         }
     }
 
+    if (showConnectedEditBlockAlert) {
+        AlertDialog(
+            onDismissRequest = { showConnectedEditBlockAlert = false },
+            icon = { Icon(Icons.Default.LockClock, contentDescription = null) },
+            title = { Text("Profile Currently Connected") },
+            text = {
+                Text("You cannot edit or delete an active configuration while the VPN tunnel is connected. Please disconnect the VPN first.")
+            },
+            confirmButton = {
+                Button(onClick = { showConnectedEditBlockAlert = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     if (cloningProfile != null) {
         val target = cloningProfile!!
         AlertDialog(
             onDismissRequest = { cloningProfile = null },
             title = { Text("Clone Profile: ${target.name}") },
-            text = { Text("Clone this configuration to multi-select and bond parallel sessions:") },
+            text = { Text("Create a duplicate of this configuration profile:") },
             confirmButton = {
                 Button(onClick = {
-                    for (i in 1..5) onSaveProfile(target.copy(id = 0, name = "${target.name} #${i + 1}", isSelected = true))
-                    VpnStateBridge.slowDnsBoostEnabled.value = true
+                    onSaveProfile(target.copy(id = 0, name = "${target.name} (Clone)", isSelected = false))
                     cloningProfile = null
-                }) { Text("Clone x5 Cluster") }
+                }) { Text("Clone Profile") }
             },
             dismissButton = {
-                OutlinedButton(onClick = {
-                    onSaveProfile(target.copy(id = 0, name = "${target.name} (Clone)", isSelected = true))
-                    cloningProfile = null
-                }) { Text("Clone 1x") }
+                TextButton(onClick = { cloningProfile = null }) { Text("Cancel") }
             }
         )
     }
@@ -277,7 +377,7 @@ fun ProtocolConfigDialog(
         "SSH+WS+SNI+PAYLOAD" to "SSH + WS + SNI + Payload (Port 443 / 80)",
         "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload/Proxy)",
         "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443 / 8080)",
-        "SLOWDNS" to "SlowDNS (DNSTT Tunnel)",
+        "SLOWDNS" to "SlowDNS (DNSTT Tunnel - Any Port)",
         "VLESS" to "VLESS (TLS 443 / noTLS 80)",
         "VMESS" to "VMess (TLS 443 / noTLS 80)",
         "TROJAN" to "Trojan (TLS 443 / noTLS 80)",
@@ -340,7 +440,8 @@ fun ProtocolConfigDialog(
                         Button(
                             onClick = {
                                 val resolvedPort = port.toIntOrNull() ?: when (selectedProtocol) {
-                                    "SSH", "SLOWDNS" -> 22
+                                    "SSH" -> 22
+                                    "SLOWDNS" -> 53
                                     "WIREGUARD" -> 51820
                                     "SSH+PAYLOAD" -> 80
                                     else -> 443
@@ -430,7 +531,8 @@ fun ProtocolConfigDialog(
                                                 selectedProtocol = code
                                                 dropdownExpanded = false
                                                 port = when (code) {
-                                                    "SSH", "SLOWDNS" -> "22"
+                                                    "SSH" -> "22"
+                                                    "SLOWDNS" -> "53"
                                                     "SSH+PAYLOAD" -> "80"
                                                     "WIREGUARD" -> "51820"
                                                     else -> "443"
