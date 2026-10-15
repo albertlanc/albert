@@ -33,30 +33,48 @@ object XrayCore {
         return null
     }
 
+    fun resolveServerIp(host: String): String {
+        val clean = host.trim()
+        return try {
+            InetAddress.getByName(clean).hostAddress ?: clean
+        } catch (_: Throwable) {
+            clean
+        }
+    }
+
     fun startLocalPort80Relay(remoteHost: String, remotePort: Int): Int {
         stopLocalPort80Relay()
         return try {
-            val server = ServerSocket(0, 128, InetAddress.getByName("127.0.0.1"))
+            val resolvedIp = resolveServerIp(remoteHost)
+            val server = ServerSocket().apply {
+                reuseAddress = true
+                receiveBufferSize = 524288
+                bind(InetSocketAddress("127.0.0.1", 0), 256)
+            }
             port80RelayServer = server
             relayRunning = true
             val localRelayPort = server.localPort
-            val cleanHost = remoteHost.trim()
 
-            Log.d(TAG, "VLESS Port-80 Private Loopback Bridge active (127.0.0.1:$localRelayPort -> $cleanHost:$remotePort)")
-
-            thread(start = true, name = "VLESS-Port80-Relay") {
+            thread(start = true, name = "BBR-Port80-Relay") {
                 while (relayRunning) {
                     try {
                         val clientSock = server.accept() ?: break
                         clientSock.tcpNoDelay = true
+                        clientSock.sendBufferSize = 524288
+                        clientSock.receiveBufferSize = 524288
+
                         relayPool.execute {
                             var remoteSock: Socket? = null
                             try {
-                                remoteSock = Socket()
-                                remoteSock.tcpNoDelay = true
-                                remoteSock.sendBufferSize = 262144
-                                remoteSock.receiveBufferSize = 262144
-                                remoteSock.connect(InetSocketAddress(cleanHost, remotePort), 10000)
+                                remoteSock = Socket().apply {
+                                    setPerformancePreferences(0, 1, 2)
+                                    tcpNoDelay = true
+                                    keepAlive = true
+                                    trafficClass = 0x18 // BBR Low-Delay + High-Throughput TOS
+                                    sendBufferSize = 524288
+                                    receiveBufferSize = 524288
+                                    connect(InetSocketAddress(resolvedIp, remotePort), 8000)
+                                }
 
                                 val cIn = clientSock.getInputStream()
                                 val cOut = clientSock.getOutputStream()
@@ -70,8 +88,9 @@ object XrayCore {
                                             val n = cIn.read(buf)
                                             if (n == -1) break
                                             rOut.write(buf, 0, n)
-                                            rOut.flush()
+                                            if (cIn.available() == 0) rOut.flush()
                                         }
+                                        rOut.flush()
                                     } catch (_: Throwable) {
                                     } finally {
                                         try { remoteSock.close() } catch (_: Throwable) {}
@@ -83,8 +102,9 @@ object XrayCore {
                                     val n = rIn.read(buf)
                                     if (n == -1) break
                                     cOut.write(buf, 0, n)
-                                    cOut.flush()
+                                    if (rIn.available() == 0) cOut.flush()
                                 }
+                                cOut.flush()
                                 upJob.cancel(true)
                             } catch (_: Throwable) {
                             } finally {
@@ -112,8 +132,6 @@ object XrayCore {
 
     fun RunXrayFromJSON(configJson: String): Boolean {
         return try {
-            VpnStateBridge.addLog("Switching Protocols...")
-
             val sanitizedConfig = configJson
                 .replace(Regex(""""allowInsecure"\s*:\s*(true|false)\s*,\s*"""), "")
                 .replace(Regex(""",\s*"allowInsecure"\s*:\s*(true|false)"""), "")
@@ -128,40 +146,16 @@ object XrayCore {
                 add("payload", payload)
             }
 
-            val responseStr = invokeLibXray(request.toString())
-            if (responseStr != null) {
-                val responseJson = JsonParser.parseString(responseStr).asJsonObject
-                val ok = responseJson.get("success")?.asBoolean ?: false
-                if (ok) {
-                    VpnStateBridge.addLog("HTTP/1.1 200 OK")
-                    return true
-                } else {
-                    Log.e(TAG, "Xray rejected config: $responseStr")
-                    VpnStateBridge.addLog("Disconnected: Handshake rejected.")
-                    return false
-                }
-            } else {
-                VpnStateBridge.addLog("Disconnected: Engine unavailable.")
-                false
+            val responseStr = invokeLibXray(request.toString()) ?: return false
+            val responseJson = JsonParser.parseString(responseStr).asJsonObject
+            val ok = responseJson.get("success")?.asBoolean ?: false
+            if (!ok) {
+                Log.e(TAG, "Xray rejected config: $responseStr")
+                VpnStateBridge.addLog("Connection failed.")
             }
+            ok
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to start Xray: ${t.message}", t)
-            VpnStateBridge.addLog("Disconnected: Connection failed.")
-            false
-        }
-    }
-
-    fun verifyServerReachable(host: String, port: Int): Boolean {
-        return try {
-            val cleanHost = host.trim()
-            VpnStateBridge.addLog("Connecting...")
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(cleanHost, port), 10000)
-            }
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "Endpoint unreachable ($host:$port): ${t.message}")
-            VpnStateBridge.addLog("Disconnected: Server unreachable.")
             false
         }
     }
@@ -179,6 +173,4 @@ object XrayCore {
             false
         }
     }
-
-    fun XrayVersion(): String = "Xray-core"
 }
