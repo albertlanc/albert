@@ -25,6 +25,7 @@ import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.firstOrNull
@@ -42,12 +43,13 @@ class SmartVpnService : VpnService() {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Uncaught coroutine error", throwable)
-        VpnStateBridge.addLog("Engine Error: ${throwable.message}")
+        VpnStateBridge.addLog("Disconnected.")
         VpnStateBridge.updateState("DISCONNECTED", "Error")
         stopVpnPipeline(resetStatus = false)
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
+    private var activeConnectJob: Job? = null
     private var vpnInterface: ParcelFileDescriptor? = null
 
     override fun onCreate() {
@@ -66,11 +68,11 @@ class SmartVpnService : VpnService() {
     private fun promoteForeground(title: String, text: String) {
         val notification = buildNotification(title, text)
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -84,17 +86,18 @@ class SmartVpnService : VpnService() {
 
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
-        VpnStateBridge.updateState("CONNECTING", "Initializing...")
-        promoteForeground("Smart VPN Ultra — Connecting", "Negotiating multi-protocol tunnel...")
+        VpnStateBridge.updateState("CONNECTING", "Connecting...")
+        promoteForeground("Smart VPN Ultra", "Connecting...")
 
-        serviceScope.launch {
+        activeConnectJob?.cancel()
+        activeConnectJob = serviceScope.launch {
             try {
                 val dao = AppDatabase.getDatabase(applicationContext).profileDao()
                 val profile = dao.getSelectedProfile()
                     ?: dao.getAllProfiles().firstOrNull()?.firstOrNull()
 
                 if (profile == null) {
-                    VpnStateBridge.addLog("Error: No configuration profile found.")
+                    VpnStateBridge.addLog("No profile selected.")
                     VpnStateBridge.updateState("DISCONNECTED", "No Profile")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -104,13 +107,12 @@ class SmartVpnService : VpnService() {
                 if (profile.lockedDeviceId.isNotBlank() &&
                     !profile.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                 ) {
-                    VpnStateBridge.addLog("HWID Security Rejected! Config is locked to ${profile.lockedDeviceId}")
+                    VpnStateBridge.addLog("HWID Lock Rejected.")
                     VpnStateBridge.updateState("DISCONNECTED", "HWID Locked")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
-                VpnStateBridge.addLog("Starting profile: ${profile.name} (${profile.protocol})")
                 val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
                 val proto = profile.protocol.uppercase()
 
@@ -157,6 +159,7 @@ class SmartVpnService : VpnService() {
                     }
 
                     proto == "HYSTERIA2" -> {
+                        VpnStateBridge.addLog("Connecting...")
                         Hysteria2Engine.startHysteria2(
                             context = applicationContext,
                             profile = profile,
@@ -166,9 +169,10 @@ class SmartVpnService : VpnService() {
 
                     proto == "WIREGUARD" -> {
                         if (profile.wgPrivateKey.isBlank() || profile.wgPublicKey.isBlank()) {
-                            VpnStateBridge.addLog("WireGuard Error: Private Key or Peer Public Key is empty!")
+                            VpnStateBridge.addLog("Connection failed.")
                             false
                         } else {
+                            VpnStateBridge.addLog("Connecting...")
                             val wgJson = buildWireGuardXrayJson(profile, localSocksPort)
                             XrayCore.RunXrayFromJSON(wgJson)
                         }
@@ -176,20 +180,22 @@ class SmartVpnService : VpnService() {
 
                     else -> {
                         if (profile.uuid.isBlank()) {
-                            VpnStateBridge.addLog("Error: UUID / Password is empty for ${profile.protocol}!")
-                            false
-                        } else if (!XrayCore.verifyServerReachable(profile.server, profile.port)) {
+                            VpnStateBridge.addLog("Connection failed.")
                             false
                         } else {
+                            VpnStateBridge.addLog("Connecting...")
                             val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
-                            XrayCore.RunXrayFromJSON(configJson)
+                            val ok = XrayCore.RunXrayFromJSON(configJson)
+                            if (ok) {
+                                VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
+                            }
+                            ok
                         }
                     }
                 }
 
                 if (!engineStarted) {
-                    VpnStateBridge.addLog("Connection failed: Verify credentials, SNI/Payload, or endpoint.")
-                    VpnStateBridge.updateState("DISCONNECTED", "Auth / Conn Failed")
+                    VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
@@ -198,12 +204,11 @@ class SmartVpnService : VpnService() {
                     HotshareServer.startHotshare(localSocksPort)
                 }
 
-                VpnStateBridge.updateState("CONNECTING", "Opening TUN...")
                 val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart VPN Ultra - ${profile.name}")
+                    .setSession("Smart VPN Ultra")
                     .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
@@ -217,7 +222,7 @@ class SmartVpnService : VpnService() {
                 vpnInterface = builder.establish()
                 val fd = vpnInterface?.fd
                 if (fd == null) {
-                    VpnStateBridge.addLog("Error: Could not open Android VPN TUN interface.")
+                    VpnStateBridge.addLog("Disconnected.")
                     VpnStateBridge.updateState("DISCONNECTED", "TUN Error")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -225,17 +230,17 @@ class SmartVpnService : VpnService() {
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
 
-                VpnStateBridge.updateState("CONNECTED", "Protected")
-                VpnStateBridge.addLog("VPN CONNECTED! Traffic routed via ${profile.name} (${profile.protocol}).")
+                VpnStateBridge.updateState("CONNECTED", "Connected")
+                VpnStateBridge.addLog("Connected.")
 
                 promoteForeground(
                     "Smart VPN Ultra • Connected",
-                    "${profile.name} (${profile.protocol}) • Active Tunnel"
+                    "Tunnel Active (${profile.name})"
                 )
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
-                VpnStateBridge.addLog("Pipeline Error: ${t.message}")
-                VpnStateBridge.updateState("DISCONNECTED", "Failed")
+                VpnStateBridge.addLog("Disconnected.")
+                VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
                 stopVpnPipeline(resetStatus = false)
             }
         }
@@ -262,7 +267,6 @@ class SmartVpnService : VpnService() {
             else -> "none"
         }
 
-        // Bypasses Xray-core's plain VLESS Port-80 restriction by routing through 127.0.0.1 loopback
         val (outboundAddress, outboundPort) = if (protocolLower == "vless" && securityMode == "none") {
             val relayPort = XrayCore.startLocalPort80Relay(serverHost, profile.port)
             Pair("127.0.0.1", relayPort)
@@ -411,6 +415,7 @@ class SmartVpnService : VpnService() {
     }
 
     private fun stopVpnPipeline(resetStatus: Boolean) {
+        activeConnectJob?.cancel()
         serviceScope.launch {
             try {
                 Tun2Socks.stopTunnel()
@@ -422,7 +427,7 @@ class SmartVpnService : VpnService() {
                 vpnInterface = null
                 if (resetStatus) {
                     VpnStateBridge.updateState("DISCONNECTED", "Idle")
-                    VpnStateBridge.addLog("Tunnel disconnected.")
+                    VpnStateBridge.addLog("Disconnected.")
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Error stopping VPN: ${t.message}")
@@ -436,6 +441,7 @@ class SmartVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        activeConnectJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }
