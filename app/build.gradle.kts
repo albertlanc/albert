@@ -16,10 +16,9 @@ android {
         applicationId = "com.albert.smartvpn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "5.0"
+        versionCode = 6
+        versionName = "6.0.0-BBR"
 
-        // Excludes x86 / x86_64 PC emulator binaries to reduce APK size by ~60%
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
