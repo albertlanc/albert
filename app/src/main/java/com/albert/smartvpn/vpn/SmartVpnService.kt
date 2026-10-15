@@ -15,6 +15,7 @@ import com.albert.smartvpn.MainActivity
 import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
+import com.albert.smartvpn.engine.HotshareServer
 import com.albert.smartvpn.engine.Hysteria2Engine
 import com.albert.smartvpn.engine.SlowDnsEngine
 import com.albert.smartvpn.engine.SshEngine
@@ -82,6 +83,7 @@ class SmartVpnService : VpnService() {
     }
 
     private fun startVpnPipeline() {
+        VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "Initializing...")
         promoteForeground("Smart VPN Ultra — Connecting", "Negotiating multi-protocol tunnel...")
 
@@ -98,11 +100,12 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
+                // Strictly Enforce Hardware Device ID Lock
                 val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
                 if (profile.lockedDeviceId.isNotBlank() &&
                     !profile.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
                 ) {
-                    VpnStateBridge.addLog("HWID Lock Rejected! Locked to ${profile.lockedDeviceId} (Yours: $myDeviceId)")
+                    VpnStateBridge.addLog("HWID Security Rejected! Config is locked to ${profile.lockedDeviceId}")
                     VpnStateBridge.updateState("DISCONNECTED", "HWID Locked")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
@@ -193,6 +196,10 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
+                if (VpnStateBridge.hotshareEnabled.value) {
+                    HotshareServer.startHotshare(localSocksPort)
+                }
+
                 VpnStateBridge.updateState("CONNECTING", "Opening TUN...")
                 val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
@@ -257,6 +264,14 @@ class SmartVpnService : VpnService() {
             else -> "none"
         }
 
+        // Fix for VLESS on Port 80 (noTLS): Xray-core requires outbound address to be a private IP (127.0.0.1)
+        val (outboundAddress, outboundPort) = if (protocolLower == "vless" && securityMode == "none") {
+            val relayPort = XrayCore.startLocalPort80Relay(serverHost, profile.port)
+            Pair("127.0.0.1", relayPort)
+        } else {
+            Pair(serverHost, profile.port)
+        }
+
         val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") {
             """, "flow": "${profile.flow.trim()}" """
         } else {
@@ -266,15 +281,15 @@ class SmartVpnService : VpnService() {
         val outboundSettings = when (protocolLower) {
             "trojan" -> """
                 "servers": [{
-                  "address": "$serverHost",
-                  "port": ${profile.port},
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
                   "password": "${profile.uuid.trim()}"
                 }]
             """.trimIndent()
             "vmess" -> """
                 "vnext": [{
-                  "address": "$serverHost",
-                  "port": ${profile.port},
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
                   "users": [{
                     "id": "${profile.uuid.trim()}",
                     "alterId": 0,
@@ -284,8 +299,8 @@ class SmartVpnService : VpnService() {
             """.trimIndent()
             else -> """
                 "vnext": [{
-                  "address": "$serverHost",
-                  "port": ${profile.port},
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
                   "users": [{
                     "id": "${profile.uuid.trim()}",
                     "encryption": "none"$flowField
@@ -294,7 +309,6 @@ class SmartVpnService : VpnService() {
             """.trimIndent()
         }
 
-        // Uses Xray-core's new verifyPeerCertByName (vcn) instead of the removed allowInsecure field
         val verifyNames = if (!sniHost.equals(serverHost, ignoreCase = true)) {
             "$sniHost,$serverHost"
         } else {
