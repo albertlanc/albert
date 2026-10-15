@@ -1,7 +1,6 @@
 package com.albert.smartvpn.engine
 
 import android.util.Log
-import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import hev.htproxy.TProxyService
 import java.io.File
 
@@ -20,14 +19,17 @@ object Tun2Socks {
                   port: $socksPort
                   address: '$socksAddress'
                   udp: 'udp'
+                misc:
+                  task-stack-size: 81920
+                  connect-timeout: 10000
+                  read-write-timeout: 60000
                 """.trimIndent()
             )
             val started = TProxyService.TProxyStartService(configFile.absolutePath, tunFd)
-            VpnStateBridge.addLog("Tun2Socks active (FD=$tunFd -> $socksAddress:$socksPort)")
+            Log.d(TAG, "Tun2Socks active (FD=$tunFd -> $socksAddress:$socksPort)")
             started
         } catch (t: Throwable) {
             Log.e(TAG, "Tun2Socks error: ${t.message}", t)
-            VpnStateBridge.addLog("Tun2Socks error: ${t.message}")
             false
         }
     }
