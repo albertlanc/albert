@@ -4,24 +4,23 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer Golden & Cyan Cyber Ring -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#00F0FF"
-        android:strokeWidth="3.5"
-        android:pathData="M54,22 L82,38 L82,70 L54,86 L26,70 L26,38 Z" />
-    <!-- Royal Armor Shield -->
+    <!-- Outer Golden-Cyan BBR Ring -->
     <path
         android:fillColor="#071330"
         android:strokeColor="#FFC107"
-        android:strokeWidth="2.8"
-        android:pathData="M54,27 L77,36 L77,54 C77,69 66,78 54,83 C42,78 31,69 31,54 L31,36 Z" />
-    <!-- Twin Turbo Wings -->
+        android:strokeWidth="3.5"
+        android:pathData="M54,16 L87,35 L87,73 L54,92 L21,73 L21,35 Z" />
+    <!-- Inner Emerald Shield -->
     <path
-        android:fillColor="#00E676"
-        android:pathData="M37,43 L48,48 L48,54 L37,49 Z M71,43 L60,48 L60,54 L71,49 Z" />
-    <!-- Central BBR Hyper-Bolt -->
+        android:fillColor="#0E275C"
+        android:strokeColor="#00E676"
+        android:strokeWidth="2.6"
+        android:pathData="M54,24 L79,34 L79,55 C79,71 67,80 54,86 C41,80 29,71 29,55 L29,34 Z" />
+    <!-- BBR High-Speed Rocket / Lightning Core -->
     <path
         android:fillColor="#00F0FF"
-        android:pathData="M58,33 L42,54 L53,54 L48,75 L66,50 L55,50 Z" />
+        android:pathData="M54,31 L67,51 L57,51 L62,75 L41,53 L51,53 Z" />
+    <path
+        android:fillColor="#FFC107"
+        android:pathData="M54,38 L61,49 L55,49 L58,66 L46,51 L52,51 Z" />
 </vector>
