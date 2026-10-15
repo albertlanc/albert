@@ -26,7 +26,9 @@ import java.security.SecureRandom
 import java.security.Security
 import java.security.cert.X509Certificate
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 import javax.net.ssl.SNIHostName
@@ -37,7 +39,12 @@ import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 object SshEngine {
-    private val sshPool = CopyOnWriteArrayList<SSHClient>()
+    private class SshWorkerNode(
+        val client: SSHClient,
+        val activeStreams: AtomicInteger = AtomicInteger(0)
+    )
+
+    private val sshPool = CopyOnWriteArrayList<SshWorkerNode>()
     private val poolSelector = AtomicInteger(0)
     @Volatile private var isRunning = false
     private var localServer: ServerSocket? = null
@@ -79,12 +86,11 @@ object SshEngine {
             }
         }
 
-        // Prioritize fastest hardware-accelerated ciphers (AES-128-CTR / AES-128-GCM)
         config.cipherFactories = config.cipherFactories.sortedBy {
             when {
                 it.name.contains("aes128-ctr", ignoreCase = true) -> 0
-                it.name.contains("aes128-gcm", ignoreCase = true) -> 1
-                it.name.contains("aes256-ctr", ignoreCase = true) -> 2
+                it.name.contains("chacha20", ignoreCase = true) -> 1
+                it.name.contains("aes128-gcm", ignoreCase = true) -> 2
                 else -> 10
             }
         }
@@ -135,16 +141,25 @@ object SshEngine {
 
         val client = SSHClient(sshConfig).apply {
             addHostKeyVerifier(PromiscuousVerifier())
-            connectTimeout = if (isSlowDns) 45000 else 15000
+            connectTimeout = if (isSlowDns) 35000 else 15000
             timeout = 0
 
-            if (VpnStateBridge.sshCompression.value) {
+            // For SlowDNS, enable Zlib compression automatically so 3x more data fits inside DNS packets!
+            // For high-speed SSL/WS, keep compression off unless manually enabled so CPU never bottlenecks 50+ Mbps.
+            if (isSlowDns || VpnStateBridge.sshCompression.value) {
                 try { useCompression() } catch (_: Throwable) {}
             }
 
-            // 8 MB Window & 64 KB Packet Size for 50+ Mbps High-Speed Streaming
-            connection.windowSize = 8388608L
-            connection.maxPacketSize = 65536
+            if (isSlowDns) {
+                // Optimal KCP/DNS framing for SlowDNS so packets never stall KCP reassembly
+                connection.windowSize = 1048576L
+                connection.maxPacketSize = 16384
+            } else {
+                // 8 MB Window & 64 KB Packet Size for 50+ Mbps High-Speed SSL/WS Streaming
+                connection.windowSize = 8388608L
+                connection.maxPacketSize = 65536
+            }
+
             val keepAliveSec = VpnStateBridge.pingIntervalSec.value.coerceIn(5, 120)
             connection.keepAlive.keepAliveInterval = keepAliveSec
 
@@ -198,13 +213,91 @@ object SshEngine {
 
         return try {
             VpnStateBridge.updateState("CONNECTING", "Connecting...")
-            VpnStateBridge.addLog("Connecting...")
-            VpnStateBridge.addDebugOnlyLog("Connecting [$mode] -> $cleanHost:$port (User: $cleanUser)")
+            if (!isSlowDns) {
+                VpnStateBridge.addLog("Connecting...")
+            }
 
+            if (isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value) {
+                // ZIVPN + SSH Custom Multi-Clone Architecture:
+                // Connect parallel SSH clients simultaneously, each pinned 1-to-1 to a dedicated libdnstt.so worker port (7001..7015)
+                val workerPorts = SlowDnsEngine.getActiveWorkerPorts()
+                val initialBatchSize = minOf(6, workerPorts.size)
+                val firstConnectedLatch = CountDownLatch(1)
+
+                for (i in 0 until initialBatchSize) {
+                    val dedicatedDnsttPort = workerPorts[i]
+                    val isFirst = (i == 0)
+                    ioThreadPool.execute {
+                        try {
+                            val client = createConnectedSshClient(
+                                mode = mode,
+                                cleanHost = "127.0.0.1",
+                                port = dedicatedDnsttPort,
+                                cleanUser = cleanUser,
+                                pass = pass,
+                                payloadTemplate = "",
+                                sni = "",
+                                proxyHost = "",
+                                proxyPort = 8080,
+                                isSlowDns = true,
+                                emitUiLogs = isFirst
+                            )
+                            if (client != null) {
+                                sshPool.add(SshWorkerNode(client))
+                                firstConnectedLatch.countDown()
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                }
+
+                // Wait up to 35s for the fastest SlowDNS worker in the parallel batch to authenticate
+                firstConnectedLatch.await(35, TimeUnit.SECONDS)
+
+                if (sshPool.isNotEmpty()) {
+                    isRunning = true
+                    startLocalSocks5Server("127.0.0.1", localPort)
+
+                    // Continue bringing remaining SlowDNS cloned worker ports (7..15) online in background
+                    for (i in initialBatchSize until workerPorts.size) {
+                        val dedicatedDnsttPort = workerPorts[i]
+                        ioThreadPool.execute {
+                            try {
+                                if (!isRunning) return@execute
+                                val client = createConnectedSshClient(
+                                    mode = mode,
+                                    cleanHost = "127.0.0.1",
+                                    port = dedicatedDnsttPort,
+                                    cleanUser = cleanUser,
+                                    pass = pass,
+                                    payloadTemplate = "",
+                                    sni = "",
+                                    proxyHost = "",
+                                    proxyPort = 8080,
+                                    isSlowDns = true,
+                                    emitUiLogs = false
+                                )
+                                if (client != null && isRunning) {
+                                    sshPool.add(SshWorkerNode(client))
+                                } else {
+                                    client?.close()
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                    return true
+                } else {
+                    VpnStateBridge.addLog("Authentication failed.")
+                    stopSshTunnel()
+                    return false
+                }
+            }
+
+            // Standard SSH / SSH+SSL / SSH+WS+SNI+Payload (or Single SlowDNS when Boost is OFF)
+            val targetPort = if (isSlowDns) SlowDnsEngine.getActiveWorkerPorts().firstOrNull() ?: port else port
             val primaryClient = createConnectedSshClient(
                 mode = mode,
                 cleanHost = cleanHost,
-                port = port,
+                port = targetPort,
                 cleanUser = cleanUser,
                 pass = pass,
                 payloadTemplate = payloadTemplate,
@@ -216,22 +309,13 @@ object SshEngine {
             )
 
             if (primaryClient != null) {
-                sshPool.add(primaryClient)
+                sshPool.add(SshWorkerNode(primaryClient))
                 isRunning = true
-
                 startLocalSocks5Server("127.0.0.1", localPort)
 
-                // Launch parallel background SSH transports:
-                // - For SSL/WS/Direct SSH: opens 3 additional parallel connections (4x total) to unlock 50+ Mbps speed
-                // - For SlowDNS with Boost ON: opens 5 additional parallel SSH sessions striped across SlowDNS Boost workers
-                val extraSessions = when {
-                    isSlowDns && VpnStateBridge.slowDnsBoostEnabled.value -> 5
-                    !isSlowDns -> 3
-                    else -> 0
-                }
-
-                if (extraSessions > 0) {
-                    for (i in 1..extraSessions) {
+                // For SSL/WS/Direct SSH, open 3 extra parallel transports (4x total) for 50+ Mbps speed
+                if (!isSlowDns) {
+                    for (i in 1..3) {
                         ioThreadPool.execute {
                             try {
                                 if (!isRunning) return@execute
@@ -245,12 +329,11 @@ object SshEngine {
                                     sni = sni,
                                     proxyHost = proxyHost,
                                     proxyPort = proxyPort,
-                                    isSlowDns = isSlowDns,
+                                    isSlowDns = false,
                                     emitUiLogs = false
                                 )
                                 if (workerClient != null && isRunning) {
-                                    sshPool.add(workerClient)
-                                    VpnStateBridge.addDebugOnlyLog("Parallel SSH Turbo session #${sshPool.size} online")
+                                    sshPool.add(SshWorkerNode(workerClient))
                                 } else {
                                     workerClient?.close()
                                 }
@@ -299,7 +382,7 @@ object SshEngine {
 
             private fun openSslSocket(tcpHost: String, tcpPort: Int, sniHost: String, forceHttp1Alpn: Boolean): SSLSocket {
                 val baseSocket = Socket()
-                baseSocket.setPerformancePreferences(0, 1, 2) // Prioritize high bandwidth
+                baseSocket.setPerformancePreferences(0, 1, 2)
                 baseSocket.tcpNoDelay = true
                 baseSocket.keepAlive = true
                 baseSocket.sendBufferSize = 524288
@@ -549,11 +632,23 @@ object SshEngine {
         override fun getLocalSocketAddress(): SocketAddress? = delegate.localSocketAddress
     }
 
-    private fun pickSshClient(): SSHClient? {
-        val healthy = sshPool.filter { it.isConnected && it.isAuthenticated }
+    /**
+     * Least-Active-Streams + Round-Robin Load Balancer:
+     * Routes each new connection to the SSH worker with the fewest active streams,
+     * ensuring parallel SlowDNS and SSL/WS sessions are utilized at 100% capacity.
+     */
+    private fun pickBestSshWorker(): SshWorkerNode? {
+        val healthy = sshPool.filter { it.client.isConnected && it.client.isAuthenticated }
         if (healthy.isEmpty()) return sshPool.firstOrNull()
-        val idx = (poolSelector.getAndIncrement() and Int.MAX_VALUE) % healthy.size
-        return healthy[idx]
+        val startIdx = (poolSelector.getAndIncrement() and Int.MAX_VALUE) % healthy.size
+        var best = healthy[startIdx]
+        for (i in 1 until healthy.size) {
+            val candidate = healthy[(startIdx + i) % healthy.size]
+            if (candidate.activeStreams.get() < best.activeStreams.get()) {
+                best = candidate
+            }
+        }
+        return best
     }
 
     private fun startLocalSocks5Server(bindHost: String, localPort: Int) {
@@ -572,16 +667,18 @@ object SshEngine {
         }
     }
 
-    private fun openSshForwardSocket(targetHost: String, targetPort: Int): Pair<ServerSocket, Socket> {
+    private fun openSshForwardSocket(targetHost: String, targetPort: Int): Triple<ServerSocket, Socket, SshWorkerNode?> {
         val bridgeServer = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val bridgePort = bridgeServer.localPort
         activeBridges.add(bridgeServer)
 
-        val selectedClient = pickSshClient()
+        val workerNode = pickBestSshWorker()
+        workerNode?.activeStreams?.incrementAndGet()
+
         val params = Parameters("127.0.0.1", bridgePort, targetHost, targetPort)
         ioThreadPool.execute {
             try {
-                selectedClient?.newLocalPortForwarder(params, bridgeServer)?.listen()
+                workerNode?.client?.newLocalPortForwarder(params, bridgeServer)?.listen()
             } catch (_: Throwable) {}
         }
 
@@ -590,12 +687,13 @@ object SshEngine {
         bridgeSocket.sendBufferSize = 262144
         bridgeSocket.receiveBufferSize = 262144
         bridgeSocket.connect(InetSocketAddress("127.0.0.1", bridgePort), 10000)
-        return Pair(bridgeServer, bridgeSocket)
+        return Triple(bridgeServer, bridgeSocket, workerNode)
     }
 
     private fun handleSocks5Client(client: Socket) {
         var bridgeServer: ServerSocket? = null
         var bridgeSocket: Socket? = null
+        var assignedWorker: SshWorkerNode? = null
         try {
             client.tcpNoDelay = true
             client.sendBufferSize = 262144
@@ -658,9 +756,10 @@ object SshEngine {
                 return
             }
 
-            val pair = openSshForwardSocket(targetHost, targetPort)
-            bridgeServer = pair.first
-            bridgeSocket = pair.second
+            val triple = openSshForwardSocket(targetHost, targetPort)
+            bridgeServer = triple.first
+            bridgeSocket = triple.second
+            assignedWorker = triple.third
 
             outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             outs.flush()
@@ -668,7 +767,6 @@ object SshEngine {
             val sshIn = bridgeSocket.getInputStream()
             val sshOut = bridgeSocket.getOutputStream()
 
-            // High-speed 64KB zero-fragmentation stream copy (only flushes when input buffer drains)
             val upstreamFuture = ioThreadPool.submit {
                 try {
                     val buf = ByteArray(65536)
@@ -702,6 +800,7 @@ object SshEngine {
             upstreamFuture.cancel(true)
         } catch (_: Throwable) {
         } finally {
+            assignedWorker?.activeStreams?.decrementAndGet()
             try { client.close() } catch (_: Throwable) {}
             try { bridgeSocket?.close() } catch (_: Throwable) {}
             try {
@@ -768,11 +867,13 @@ object SshEngine {
                         ioThreadPool.execute {
                             var bServer: ServerSocket? = null
                             var bSocket: Socket? = null
+                            var worker: SshWorkerNode? = null
                             try {
                                 val dnsTarget = if (dstPort == 53) dstHost else "8.8.8.8"
-                                val pair = openSshForwardSocket(dnsTarget, 53)
-                                bServer = pair.first
-                                bSocket = pair.second
+                                val triple = openSshForwardSocket(dnsTarget, 53)
+                                bServer = triple.first
+                                bSocket = triple.second
+                                worker = triple.third
                                 bSocket.soTimeout = 5000
 
                                 val dos = DataOutputStream(bSocket.getOutputStream())
@@ -792,6 +893,7 @@ object SshEngine {
                                 relayRef.send(DatagramPacket(fullResp, fullResp.size, clientAddr))
                             } catch (_: Throwable) {
                             } finally {
+                                worker?.activeStreams?.decrementAndGet()
                                 try { bSocket?.close() } catch (_: Throwable) {}
                                 try {
                                     bServer?.close()
@@ -831,13 +933,13 @@ object SshEngine {
         try { localServer?.close() } catch (_: Throwable) {}
         localServer = null
 
-        val clientsToClose = ArrayList(sshPool)
+        val nodesToClose = ArrayList(sshPool)
         sshPool.clear()
         ioThreadPool.execute {
-            clientsToClose.forEach { client ->
+            nodesToClose.forEach { node ->
                 try {
-                    client.disconnect()
-                    client.close()
+                    node.client.disconnect()
+                    node.client.close()
                 } catch (_: Throwable) {}
             }
         }
