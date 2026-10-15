@@ -51,9 +51,13 @@ fun ConfigsScreen(
     var showConfigDialog by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var sharingProfile by remember { mutableStateOf<VpnProfile?>(null) }
+    var cloningProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var unlockPromptProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var unlockActionType by remember { mutableStateOf("EDIT") }
     var showImportModal by remember { mutableStateOf(false) }
+
+    // Multi-Select Cluster bonding state
+    val multiSelectedIds = remember { mutableStateListOf<Int>() }
 
     Scaffold(
         modifier = modifier,
@@ -119,13 +123,20 @@ fun ConfigsScreen(
                     .padding(padding)
             ) {
                 items(profiles) { profile: VpnProfile ->
+                    val isMultiChecked = profile.isSelected || multiSelectedIds.contains(profile.id)
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .clickable { onSelectProfile(profile) },
+                            .clickable {
+                                onSelectProfile(profile)
+                                if (!multiSelectedIds.contains(profile.id)) {
+                                    multiSelectedIds.add(profile.id)
+                                }
+                            },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (profile.isSelected) {
+                            containerColor = if (isMultiChecked) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
@@ -134,11 +145,28 @@ fun ConfigsScreen(
                     ) {
                         Row(
                             modifier = Modifier
-                                .padding(16.dp)
+                                .padding(12.dp)
                                 .fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Checkbox(
+                                checked = isMultiChecked,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        if (!multiSelectedIds.contains(profile.id)) {
+                                            multiSelectedIds.add(profile.id)
+                                        }
+                                        onSelectProfile(profile)
+                                        if (profile.protocol == "SLOWDNS") {
+                                            VpnStateBridge.slowDnsBoostEnabled.value = true
+                                        }
+                                    } else {
+                                        multiSelectedIds.remove(profile.id)
+                                    }
+                                }
+                            )
+
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (profile.isLocked) {
@@ -184,6 +212,9 @@ fun ConfigsScreen(
                                 }
                             }
                             Row {
+                                IconButton(onClick = { cloningProfile = profile }) {
+                                    Icon(Icons.Default.CopyAll, contentDescription = "Clone Config")
+                                }
                                 IconButton(onClick = {
                                     if (profile.isLocked) {
                                         unlockActionType = "SHARE"
@@ -205,7 +236,10 @@ fun ConfigsScreen(
                                 }) {
                                     Icon(Icons.Default.Edit, contentDescription = "Edit Profile")
                                 }
-                                IconButton(onClick = { onDeleteProfile(profile) }) {
+                                IconButton(onClick = {
+                                    multiSelectedIds.remove(profile.id)
+                                    onDeleteProfile(profile)
+                                }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete Profile")
                                 }
                             }
@@ -214,6 +248,50 @@ fun ConfigsScreen(
                 }
             }
         }
+    }
+
+    // Clone Profile Dialog (Clone 1x or 5x Cluster)
+    if (cloningProfile != null) {
+        val target = cloningProfile!!
+        AlertDialog(
+            onDismissRequest = { cloningProfile = null },
+            icon = { Icon(Icons.Default.CopyAll, contentDescription = null) },
+            title = { Text("Clone Profile: ${target.name}") },
+            text = {
+                Text("Clone this configuration to multi-select and bond multiple SlowDNS / SSH sessions together:")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    for (i in 1..5) {
+                        onSaveProfile(
+                            target.copy(
+                                id = 0,
+                                name = "${target.name} #${i + 1}",
+                                isSelected = true
+                            )
+                        )
+                    }
+                    VpnStateBridge.slowDnsBoostEnabled.value = true
+                    cloningProfile = null
+                }) {
+                    Text("Clone x5 Cluster")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = {
+                    onSaveProfile(
+                        target.copy(
+                            id = 0,
+                            name = "${target.name} (Clone)",
+                            isSelected = true
+                        )
+                    )
+                    cloningProfile = null
+                }) {
+                    Text("Clone 1x")
+                }
+            }
+        )
     }
 
     if (showConfigDialog) {
