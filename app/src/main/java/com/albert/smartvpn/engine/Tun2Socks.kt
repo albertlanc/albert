@@ -13,7 +13,7 @@ object Tun2Socks {
             configFile.writeText(
                 """
                 tunnel:
-                  mtu: 1380
+                  mtu: 1500
                   ipv4: 10.0.0.2
                 socks5:
                   port: $socksPort
@@ -21,13 +21,14 @@ object Tun2Socks {
                   udp: 'udp'
                 misc:
                   task-stack-size: 81920
+                  tcp-buffer-size: 65536
                   connect-timeout: 5000
                   read-write-timeout: 60000
                 """.trimIndent()
             )
             TProxyService.TProxyStartService(configFile.absolutePath, tunFd)
         } catch (t: Throwable) {
-            Log.e(TAG, "Tun2Socks start error: ${t.message}")
+            Log.e(TAG, "Tun2Socks error: ${t.message}", t)
             false
         }
     }
@@ -36,7 +37,6 @@ object Tun2Socks {
         return try {
             if (TProxyService.TProxyIsRunning()) {
                 TProxyService.TProxyStopService()
-                Thread.sleep(150)
             }
             true
         } catch (t: Throwable) {
@@ -45,3 +45,4 @@ object Tun2Socks {
         }
     }
 }
+// === END OF FILE ===
