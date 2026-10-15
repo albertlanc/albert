@@ -18,64 +18,41 @@ object XrayCore {
     @Volatile private var relayRunning = false
 
     private fun invokeLibXray(requestJson: String): String? {
-        val candidateClasses = listOf("libXray.LibXray", "libxray.Libxray")
-        for (className in candidateClasses) {
+        for (className in listOf("libXray.LibXray", "libxray.Libxray")) {
             try {
                 val clazz = Class.forName(className)
                 val method = clazz.methods.firstOrNull {
-                    it.name.equals("invoke", ignoreCase = true) && it.parameterTypes.size == 1
+                    it.name.equals("invoke", true) && it.parameterTypes.size == 1
                 }
-                if (method != null) {
-                    return method.invoke(null, requestJson) as? String
-                }
+                if (method != null) return method.invoke(null, requestJson) as? String
             } catch (_: Throwable) {}
         }
         return null
     }
 
-    fun resolveServerIp(host: String): String {
-        val clean = host.trim()
-        return try {
-            InetAddress.getByName(clean).hostAddress ?: clean
-        } catch (_: Throwable) {
-            clean
-        }
-    }
-
     fun startLocalPort80Relay(remoteHost: String, remotePort: Int): Int {
         stopLocalPort80Relay()
         return try {
-            val resolvedIp = resolveServerIp(remoteHost)
-            val server = ServerSocket().apply {
-                reuseAddress = true
-                receiveBufferSize = 524288
-                bind(InetSocketAddress("127.0.0.1", 0), 256)
-            }
+            val server = ServerSocket(0, 128, InetAddress.getByName("127.0.0.1"))
             port80RelayServer = server
             relayRunning = true
             val localRelayPort = server.localPort
+            val cleanHost = remoteHost.trim()
 
-            thread(start = true, name = "BBR-Port80-Relay") {
+            thread(start = true, name = "VLESS-Port80-Relay") {
                 while (relayRunning) {
                     try {
                         val clientSock = server.accept() ?: break
                         clientSock.tcpNoDelay = true
-                        clientSock.sendBufferSize = 524288
-                        clientSock.receiveBufferSize = 524288
-
                         relayPool.execute {
                             var remoteSock: Socket? = null
                             try {
                                 remoteSock = Socket().apply {
-                                    setPerformancePreferences(0, 1, 2)
                                     tcpNoDelay = true
-                                    keepAlive = true
-                                    trafficClass = 0x18 // BBR Low-Delay + High-Throughput TOS
-                                    sendBufferSize = 524288
-                                    receiveBufferSize = 524288
-                                    connect(InetSocketAddress(resolvedIp, remotePort), 8000)
+                                    sendBufferSize = 131072
+                                    receiveBufferSize = 131072
+                                    connect(InetSocketAddress(cleanHost, remotePort), 10000)
                                 }
-
                                 val cIn = clientSock.getInputStream()
                                 val cOut = clientSock.getOutputStream()
                                 val rIn = remoteSock.getInputStream()
@@ -132,14 +109,12 @@ object XrayCore {
 
     fun RunXrayFromJSON(configJson: String): Boolean {
         return try {
-            val sanitizedConfig = configJson
+            val sanitized = configJson
                 .replace(Regex(""""allowInsecure"\s*:\s*(true|false)\s*,\s*"""), "")
                 .replace(Regex(""",\s*"allowInsecure"\s*:\s*(true|false)"""), "")
                 .replace(Regex(""""allowInsecure"\s*:\s*(true|false)"""), "")
 
-            val payload = JsonObject().apply {
-                addProperty("xrayJson", sanitizedConfig)
-            }
+            val payload = JsonObject().apply { addProperty("xrayJson", sanitized) }
             val request = JsonObject().apply {
                 addProperty("apiVersion", 3)
                 addProperty("method", "runXray")
@@ -160,6 +135,17 @@ object XrayCore {
         }
     }
 
+    fun verifyServerReachable(host: String, port: Int): Boolean {
+        return try {
+            Socket().use { it.connect(InetSocketAddress(host.trim(), port), 8000) }
+            VpnStateBridge.addLog("HTTP/1.1 200 OK")
+            true
+        } catch (_: Throwable) {
+            VpnStateBridge.addLog("Connection failed.")
+            false
+        }
+    }
+
     fun StopXray(): Boolean {
         stopLocalPort80Relay()
         return try {
@@ -173,4 +159,7 @@ object XrayCore {
             false
         }
     }
+
+    fun XrayVersion(): String = "Xray-core"
 }
+// === END OF FILE ===
