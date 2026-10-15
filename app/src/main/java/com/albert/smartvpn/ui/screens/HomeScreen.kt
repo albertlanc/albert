@@ -44,6 +44,7 @@ fun HomeScreen(
     val connectionState by VpnStateBridge.connectionState.collectAsState()
     val statusMessage by VpnStateBridge.statusMessage.collectAsState()
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
+    val slowDnsBoostEnabled by VpnStateBridge.slowDnsBoostEnabled.collectAsState()
     val localSocksPort by VpnStateBridge.localSocksPort.collectAsState()
     val customDns1 by VpnStateBridge.customDns1.collectAsState()
     val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
@@ -119,7 +120,7 @@ fun HomeScreen(
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // 1. TOP CONNECT / DISCONNECT CHECKBOX COMMAND DECK
         Card(
@@ -155,7 +156,7 @@ fun HomeScreen(
                         Text(
                             text = when (connectionState) {
                                 "CONNECTED" -> "TUNNEL CONNECTED"
-                                "CONNECTING" -> "ESTABLISHING TUNNEL..."
+                                "CONNECTING" -> "CONNECTING..."
                                 else -> "CONNECT VPN TUNNEL"
                             },
                             style = MaterialTheme.typography.titleMedium,
@@ -195,7 +196,63 @@ fun HomeScreen(
             }
         }
 
-        // 2. QUANTUM ORBITAL REACTOR CORE & LIVE TELEMETRY
+        // 2. SLOWDNS TURBO BOOST ACTIVATION BUTTON (LIKE ZIVPN / SSH CUSTOM)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                .clickable {
+                    val next = !slowDnsBoostEnabled
+                    VpnStateBridge.slowDnsBoostEnabled.value = next
+                    VpnStateBridge.addLog(if (next) "SlowDNS Boost Enabled." else "SlowDNS Boost Disabled.")
+                },
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = Icons.Default.RocketLaunch,
+                        contentDescription = null,
+                        tint = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "SlowDNS Speed Boost",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (slowDnsBoostEnabled) "ACTIVE • Multi-session DNS acceleration enabled" else "OFF • Tap to activate before connecting SlowDNS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (slowDnsBoostEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Switch(
+                    checked = slowDnsBoostEnabled,
+                    onCheckedChange = {
+                        VpnStateBridge.slowDnsBoostEnabled.value = it
+                        VpnStateBridge.addLog(if (it) "SlowDNS Boost Enabled." else "SlowDNS Boost Disabled.")
+                    }
+                )
+            }
+        }
+
+        // 3. QUANTUM ORBITAL REACTOR CORE & LIVE TELEMETRY
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -206,7 +263,7 @@ fun HomeScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(22.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val tertiaryColor = MaterialTheme.colorScheme.tertiary
@@ -214,7 +271,7 @@ fun HomeScreen(
 
                 Box(
                     modifier = Modifier
-                        .size(148.dp)
+                        .size(142.dp)
                         .clickable { onToggleConnection() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -265,7 +322,7 @@ fun HomeScreen(
 
                     Box(
                         modifier = Modifier
-                            .size(84.dp)
+                            .size(82.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.radialGradient(
@@ -281,7 +338,7 @@ fun HomeScreen(
                             imageVector = if (isConnected) Icons.Default.Lock else Icons.Default.Shield,
                             contentDescription = null,
                             tint = accentColor,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.size(42.dp)
                         )
                     }
                 }
@@ -291,19 +348,19 @@ fun HomeScreen(
                 Text(
                     text = formattedTimer,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 30.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
                 Text(
-                    text = if (isConnected) "QUANTUM ENCRYPTED STREAM ACTIVE" else "SYSTEM STANDBY • READY",
+                    text = if (isConnected) "4X TURBO ENCRYPTED STREAM ACTIVE" else "SYSTEM STANDBY • READY",
                     style = MaterialTheme.typography.labelSmall,
                     color = accentColor,
                     letterSpacing = 1.4.sp
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Row(
                     modifier = Modifier
@@ -359,7 +416,7 @@ fun HomeScreen(
             }
         }
 
-        // 3. TELEMETRY & ENGINE STATS GRID
+        // 4. TELEMETRY & ENGINE STATS GRID
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -400,7 +457,7 @@ fun HomeScreen(
             )
         }
 
-        // 4. DEVICE HARDWARE ID BADGE
+        // 5. DEVICE HARDWARE ID BADGE
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
