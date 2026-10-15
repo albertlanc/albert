@@ -13,7 +13,7 @@ object Tun2Socks {
             configFile.writeText(
                 """
                 tunnel:
-                  mtu: 1500
+                  mtu: 1380
                   ipv4: 10.0.0.2
                 socks5:
                   port: $socksPort
@@ -21,15 +21,13 @@ object Tun2Socks {
                   udp: 'udp'
                 misc:
                   task-stack-size: 81920
-                  connect-timeout: 10000
+                  connect-timeout: 5000
                   read-write-timeout: 60000
                 """.trimIndent()
             )
-            val started = TProxyService.TProxyStartService(configFile.absolutePath, tunFd)
-            Log.d(TAG, "Tun2Socks active (FD=$tunFd -> $socksAddress:$socksPort)")
-            started
+            TProxyService.TProxyStartService(configFile.absolutePath, tunFd)
         } catch (t: Throwable) {
-            Log.e(TAG, "Tun2Socks error: ${t.message}", t)
+            Log.e(TAG, "Tun2Socks start error: ${t.message}")
             false
         }
     }
@@ -38,6 +36,7 @@ object Tun2Socks {
         return try {
             if (TProxyService.TProxyIsRunning()) {
                 TProxyService.TProxyStopService()
+                Thread.sleep(150)
             }
             true
         } catch (t: Throwable) {
