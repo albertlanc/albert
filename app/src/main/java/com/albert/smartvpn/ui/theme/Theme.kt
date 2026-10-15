@@ -69,58 +69,58 @@ private val RoyalAmethystGoldScheme = darkColorScheme(
     error = Color(0xFFFF5252)
 )
 
-// Theme 4: Emerald Matrix (Cyber Green)
+// Theme 4: Emerald Matrix (Hacker Terminal Dark)
 private val EmeraldMatrixScheme = darkColorScheme(
     primary = Color(0xFF00FF66),
-    onPrimary = Color(0xFF00240C),
-    primaryContainer = Color(0xFF063B1E),
-    onPrimaryContainer = Color(0xFF99FFBE),
+    onPrimary = Color(0xFF00220B),
+    primaryContainer = Color(0xFF073B1E),
+    onPrimaryContainer = Color(0xFFA6FFCB),
     secondary = Color(0xFF00E5FF),
-    onSecondary = Color(0xFF002026),
-    tertiary = Color(0xFFB2FF59),
-    background = Color(0xFF030B06),
-    onBackground = Color(0xFFE6F9ED),
-    surface = Color(0xFF07170D),
-    onSurface = Color(0xFFE6F9ED),
+    onSecondary = Color(0xFF002024),
+    tertiary = Color(0xFF76FF03),
+    background = Color(0xFF030D06),
+    onBackground = Color(0xFFE6F9EC),
+    surface = Color(0xFF071A0E),
+    onSurface = Color(0xFFE6F9EC),
     surfaceVariant = Color(0xFF0E2918),
-    onSurfaceVariant = Color(0xFF8SC9A3.let { Color(0xFF8CC9A3) }),
+    onSurfaceVariant = Color(0xFF88C49E),
     error = Color(0xFFFF5252)
 )
 
-// Theme 5: Crimson Stealth (Red Ops)
-private val CrimsonStealthScheme = darkColorScheme(
+// Theme 5: Crimson Phantom (Red Stealth Ops Dark)
+private val CrimsonPhantomScheme = darkColorScheme(
     primary = Color(0xFFFF1744),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFF4A0A18),
-    onPrimaryContainer = Color(0xFFFFB2C1),
+    primaryContainer = Color(0xFF4A0E1C),
+    onPrimaryContainer = Color(0xFFFFB2C0),
     secondary = Color(0xFFFF9100),
     onSecondary = Color(0xFF261400),
     tertiary = Color(0xFFFF4081),
-    background = Color(0xFF0C0507),
-    onBackground = Color(0xFFFCEEEF),
-    surface = Color(0xFF18090D),
-    onSurface = Color(0xFFFCEEEF),
+    background = Color(0xFF0D0407),
+    onBackground = Color(0xFFFFF0F3),
+    surface = Color(0xFF1A090E),
+    onSurface = Color(0xFFFFF0F3),
     surfaceVariant = Color(0xFF2B1018),
-    onSurfaceVariant = Color(0xFFD8A8B2),
+    onSurfaceVariant = Color(0xFFD8A8B4),
     error = Color(0xFFFF5252)
 )
 
-// Theme 6: Arctic Aurora (Nordic Frost)
-private val ArcticAuroraScheme = darkColorScheme(
-    primary = Color(0xFF64FFDA),
-    onPrimary = Color(0xFF00241D),
-    primaryContainer = Color(0xFF0E3A47),
-    onPrimaryContainer = Color(0xFFB2FFF0),
-    secondary = Color(0xFF40C4FF),
-    onSecondary = Color(0xFF001E2E),
-    tertiary = Color(0xFF80D8FF),
-    background = Color(0xFF07131A),
-    onBackground = Color(0xFFECF8FD),
-    surface = Color(0xFF0D202B),
-    onSurface = Color(0xFFECF8FD),
-    surfaceVariant = Color(0xFF163242),
-    onSurfaceVariant = Color(0xFF9AC5D8),
-    error = Color(0xFFFF5252)
+// Theme 6: Arctic Frost (Ice Cyan & Platinum Light)
+private val ArcticFrostLightScheme = lightColorScheme(
+    primary = Color(0xFF00838F),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFB2EBF2),
+    onPrimaryContainer = Color(0xFF00292E),
+    secondary = Color(0xFF0277BD),
+    onSecondary = Color(0xFFFFFFFF),
+    tertiary = Color(0xFF00695C),
+    background = Color(0xFFEEF7F9),
+    onBackground = Color(0xFF072227),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF072227),
+    surfaceVariant = Color(0xFFDCEEF2),
+    onSurfaceVariant = Color(0xFF2C535A),
+    error = Color(0xFFC62828)
 )
 
 fun resolveActiveThemeKey(selectedMode: String): String {
@@ -135,14 +135,14 @@ fun SmartVpnTheme(
 ) {
     val selectedThemeMode by VpnStateBridge.themeMode.collectAsState()
     val effectiveTheme = resolveActiveThemeKey(selectedThemeMode)
-    val isLightTheme = (effectiveTheme == "SOLAR_LIGHT")
+    val isLightTheme = (effectiveTheme == "SOLAR_LIGHT" || effectiveTheme == "ARCTIC_FROST")
 
     val colorScheme = when (effectiveTheme) {
         "SOLAR_LIGHT" -> SolarCrystalLightScheme
         "ROYAL_GOLD" -> RoyalAmethystGoldScheme
         "EMERALD_MATRIX" -> EmeraldMatrixScheme
-        "CRIMSON_STEALTH" -> CrimsonStealthScheme
-        "ARCTIC_AURORA" -> ArcticAuroraScheme
+        "CRIMSON_PHANTOM" -> CrimsonPhantomScheme
+        "ARCTIC_FROST" -> ArcticFrostLightScheme
         else -> CyberObsidianScheme
     }
 
