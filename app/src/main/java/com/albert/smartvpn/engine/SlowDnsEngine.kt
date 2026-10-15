@@ -7,10 +7,10 @@ import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
+import java.net.SocketAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -18,19 +18,14 @@ import kotlin.concurrent.thread
 
 object SlowDnsEngine {
     private const val TAG = "SlowDnsEngine"
-    private const val BOOST_INSTANCES = 15
-    private const val BASE_WORKER_PORT = 7001
-
-    private val workerProcesses = CopyOnWriteArrayList<Process>()
-    private var balancerServer: ServerSocket? = null
-    private val balancerPool = Executors.newCachedThreadPool()
-    private val roundRobinIndex = AtomicInteger(0)
+    private const val BOOST_UDP_CHANNELS = 15
+    private var dnsttProcess: Process? = null
+    private var localUdpProxy: DatagramSocket? = null
+    private val upstreamUdpPool = CopyOnWriteArrayList<DatagramSocket>()
+    private val poolExecutor = Executors.newCachedThreadPool()
+    private val channelSelector = AtomicInteger(0)
     @Volatile private var isRunning = false
-
-    private val boostResolvers = listOf(
-        "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9",
-        "149.112.112.112", "208.67.222.222", "208.67.220.220", "4.2.2.1", "4.2.2.2"
-    )
+    @Volatile private var lastClientAddr: SocketAddress? = null
 
     private fun normalizePubKeyToHex(rawKey: String): String {
         val trimmed = rawKey.replace(Regex("\\s+"), "")
@@ -49,6 +44,88 @@ object SlowDnsEngine {
         }
     }
 
+    /**
+     * Starts an internal 15-socket High-Priority UDP DNS Accelerator for SlowDNS Boost.
+     * Fans out DNS tunnel packets across 15 parallel low-delay UDP sockets with 1 MB buffers
+     * and dual-packet pacing so downstream DNSTT polling never stalls.
+     */
+    private fun startUdpDnsBooster(remoteDnsIp: String, remoteDnsPort: Int): Int {
+        val localProxy = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
+        localProxy.receiveBufferSize = 1048576
+        localProxy.sendBufferSize = 1048576
+        localUdpProxy = localProxy
+        val proxyPort = localProxy.localPort
+        val remoteInet = InetAddress.getByName(remoteDnsIp)
+
+        // Open 15 parallel high-priority UDP sockets to the DNS server
+        for (i in 0 until BOOST_UDP_CHANNELS) {
+            val upSock = DatagramSocket()
+            try {
+                upSock.trafficClass = 0x10 // IPTOS_LOWDELAY
+                upSock.receiveBufferSize = 524288
+                upSock.sendBufferSize = 524288
+            } catch (_: Throwable) {}
+            upstreamUdpPool.add(upSock)
+
+            // Dedicated receiver per upstream socket -> forwards DNS responses immediately back to dnstt-client
+            poolExecutor.execute {
+                val buf = ByteArray(4096)
+                while (isRunning && !upSock.isClosed) {
+                    try {
+                        val respPkt = DatagramPacket(buf, buf.size)
+                        upSock.receive(respPkt)
+                        val clientTarget = lastClientAddr ?: continue
+                        val forwardPkt = DatagramPacket(
+                            respPkt.data,
+                            respPkt.offset,
+                            respPkt.length,
+                            clientTarget
+                        )
+                        localProxy.send(forwardPkt)
+                    } catch (_: Throwable) {
+                        if (!isRunning) break
+                    }
+                }
+            }
+        }
+
+        // Upstream dispatcher: stripes dnstt-client queries across all 15 UDP channels
+        thread(start = true, name = "SlowDNS-UDP-Booster") {
+            val buf = ByteArray(4096)
+            while (isRunning && !localProxy.isClosed) {
+                try {
+                    val pkt = DatagramPacket(buf, buf.size)
+                    localProxy.receive(pkt)
+                    lastClientAddr = pkt.socketAddress
+
+                    val payload = pkt.data.copyOfRange(pkt.offset, pkt.offset + pkt.length)
+                    if (upstreamUdpPool.isEmpty()) continue
+
+                    val idx1 = (channelSelector.getAndIncrement() and Int.MAX_VALUE) % upstreamUdpPool.size
+                    val primarySock = upstreamUdpPool[idx1]
+                    val outPkt = DatagramPacket(payload, payload.size, remoteInet, remoteDnsPort)
+                    primarySock.send(outPkt)
+
+                    // Send a paced secondary channel copy on parallel socket to eliminate UDP packet loss drops
+                    val idx2 = (idx1 + 7) % upstreamUdpPool.size
+                    val secondarySock = upstreamUdpPool[idx2]
+                    poolExecutor.execute {
+                        try {
+                            Thread.sleep(12)
+                            if (isRunning && !secondarySock.isClosed) {
+                                secondarySock.send(DatagramPacket(payload, payload.size, remoteInet, remoteDnsPort))
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                } catch (_: Throwable) {
+                    if (!isRunning) break
+                }
+            }
+        }
+
+        return proxyPort
+    }
+
     fun startSlowDns(
         context: Context,
         dnsServerIp: String,
@@ -63,194 +140,112 @@ object SlowDnsEngine {
         val cleanNs = nsDomain.trim()
         val cleanPubKey = normalizePubKeyToHex(pubKey)
 
-        if (cleanNs.isEmpty()) {
-            VpnStateBridge.addLog("SlowDNS Error: Name Server (NS Domain) is empty!")
-            return false
-        }
-        if (cleanPubKey.length != 64) {
-            VpnStateBridge.addLog("SlowDNS Error: Public Key must be 64 hex chars (got ${cleanPubKey.length}).")
+        if (cleanNs.isEmpty() || cleanPubKey.length != 64) {
+            VpnStateBridge.addLog("Disconnected: Invalid SlowDNS configuration.")
             return false
         }
 
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val dnsttBin = File(nativeDir, "libdnstt.so")
         if (!dnsttBin.exists()) {
-            VpnStateBridge.addLog("SlowDNS Error: Native libdnstt.so binary not found.")
+            VpnStateBridge.addLog("Disconnected: SlowDNS engine unavailable.")
             return false
         }
         dnsttBin.setExecutable(true)
 
-        val primaryDnsIp = try {
-            InetAddress.getByName(rawDnsHost).hostAddress ?: rawDnsHost
-        } catch (_: Throwable) {
-            rawDnsHost
+        val resolvedDnsIp = if (rawDnsHost.startsWith("https://", ignoreCase = true) ||
+            rawDnsHost.startsWith("tls://", ignoreCase = true)
+        ) {
+            dnsServerIp.trim()
+        } else {
+            try {
+                InetAddress.getByName(rawDnsHost).hostAddress ?: rawDnsHost
+            } catch (_: Throwable) {
+                rawDnsHost
+            }
         }
+
+        val listenAddr = "127.0.0.1:$localPort"
 
         return try {
             isRunning = true
-            VpnStateBridge.updateState("CONNECTING", "Starting 15x SlowDNS Boost...")
-            VpnStateBridge.addLog("Activating SlowDNS 15x Turbo Boost -> NS: $cleanNs")
+            VpnStateBridge.updateState("CONNECTING", "Connecting...")
+            VpnStateBridge.addLog("Connecting...")
 
-            val activeWorkerPorts = CopyOnWriteArrayList<Int>()
+            val useBoost = VpnStateBridge.slowDnsBoostEnabled.value &&
+                !resolvedDnsIp.startsWith("https://", ignoreCase = true) &&
+                !resolvedDnsIp.startsWith("tls://", ignoreCase = true)
 
-            // Spawn 15 internal parallel dnstt-client instances on ports 7001..7015
-            for (idx in 0 until BOOST_INSTANCES) {
-                val workerPort = BASE_WORKER_PORT + idx
-                val workerListen = "127.0.0.1:$workerPort"
+            val effectiveUdpTarget = if (useBoost) {
+                val boostPort = startUdpDnsBooster(resolvedDnsIp, dnsPort)
+                Log.d(TAG, "SlowDNS Boost UDP Accelerator bound on 127.0.0.1:$boostPort -> $resolvedDnsIp:$dnsPort")
+                "127.0.0.1:$boostPort"
+            } else {
+                "$resolvedDnsIp:$dnsPort"
+            }
 
-                // First 10 instances lock onto the user's primary DNS server IP;
-                // remaining 5 instances stripe across parallel DNS resolvers for multi-path speed boost
-                val targetResolverIp = if (idx < 10) {
-                    primaryDnsIp
-                } else {
-                    boostResolvers[(idx - 10) % boostResolvers.size]
-                }
-                val resolverAddr = "$targetResolverIp:$dnsPort"
+            val cmd = when {
+                resolvedDnsIp.startsWith("https://", ignoreCase = true) ->
+                    listOf(dnsttBin.absolutePath, "-doh", resolvedDnsIp, "-pubkey", cleanPubKey, cleanNs, listenAddr)
+                resolvedDnsIp.startsWith("tls://", ignoreCase = true) ->
+                    listOf(dnsttBin.absolutePath, "-dot", resolvedDnsIp.removePrefix("tls://"), "-pubkey", cleanPubKey, cleanNs, listenAddr)
+                else ->
+                    listOf(dnsttBin.absolutePath, "-udp", effectiveUdpTarget, "-pubkey", cleanPubKey, cleanNs, listenAddr)
+            }
 
-                val cmd = listOf(
-                    dnsttBin.absolutePath,
-                    "-udp",
-                    resolverAddr,
-                    "-pubkey",
-                    cleanPubKey,
-                    cleanNs,
-                    workerListen
-                )
+            val pb = ProcessBuilder(cmd).redirectErrorStream(true)
+            dnsttProcess = pb.start()
 
-                val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
-                workerProcesses.add(proc)
-                activeWorkerPorts.add(workerPort)
-
-                // Log primary worker events without flooding the UI
-                if (idx == 0) {
-                    thread(start = true, name = "SlowDNS-Primary-Logger") {
-                        try {
-                            val reader = BufferedReader(InputStreamReader(proc.inputStream))
-                            while (isRunning) {
-                                val line = reader.readLine() ?: break
-                                val text = line.trim()
-                                if (text.isNotEmpty()) {
-                                    Log.d(TAG, text)
-                                    VpnStateBridge.addLog("[DNSTT-Boost] $text")
-                                }
+            thread(start = true, name = "SlowDNS-Logger") {
+                try {
+                    val proc = dnsttProcess ?: return@thread
+                    val reader = BufferedReader(InputStreamReader(proc.inputStream))
+                    while (isRunning) {
+                        val line = reader.readLine() ?: break
+                        val text = line.trim()
+                        if (text.isNotEmpty()) {
+                            // Keep raw DNSTT logs in background logcat only
+                            Log.d(TAG, "[DNSTT] $text")
+                            if (text.contains("begin session", ignoreCase = true)) {
+                                VpnStateBridge.addLog("Switching Protocols...")
                             }
-                        } catch (_: Throwable) {}
-                    }
-                } else {
-                    // Drain stdout of worker instances 2..15 so their pipe buffers never block
-                    balancerPool.execute {
-                        try {
-                            val ins = proc.inputStream
-                            val buf = ByteArray(512)
-                            while (isRunning && ins.read(buf) != -1) {}
-                        } catch (_: Throwable) {}
-                    }
-                }
-            }
-
-            // Start the internal Multi-Path Load Balancer on 127.0.0.1:7000
-            balancerServer = ServerSocket()
-            balancerServer?.reuseAddress = true
-            balancerServer?.bind(InetSocketAddress("127.0.0.1", localPort), 64)
-
-            thread(start = true, name = "SlowDNS-15x-Balancer") {
-                while (isRunning) {
-                    try {
-                        val clientSock = balancerServer?.accept() ?: break
-                        clientSock.tcpNoDelay = true
-                        clientSock.sendBufferSize = 65536
-                        clientSock.receiveBufferSize = 65536
-
-                        balancerPool.execute {
-                            bridgeToBoostWorker(clientSock, activeWorkerPorts)
                         }
-                    } catch (_: Throwable) {
-                        if (!isRunning) break
                     }
-                }
+                } catch (_: Throwable) {}
             }
 
-            Thread.sleep(1000)
+            Thread.sleep(1100)
 
-            val aliveCount = workerProcesses.count { it.isAlive }
-            if (aliveCount > 0) {
-                VpnStateBridge.addLog("SlowDNS Boost Active: $aliveCount/$BOOST_INSTANCES parallel engines bound to 127.0.0.1:$localPort")
+            if (dnsttProcess?.isAlive == true) {
                 true
             } else {
-                VpnStateBridge.addLog("SlowDNS Error: All boost workers exited. Check Public Key or NS Domain.")
+                VpnStateBridge.addLog("Disconnected: SlowDNS handshake failed.")
                 stopSlowDns()
                 false
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "SlowDNS Boost Error", t)
-            VpnStateBridge.addLog("SlowDNS Error: ${t.message}")
+            Log.e(TAG, "SlowDNS Error", t)
+            VpnStateBridge.addLog("Disconnected: Connection failed.")
             stopSlowDns()
             false
         }
     }
 
-    private fun bridgeToBoostWorker(clientSock: Socket, workerPorts: List<Int>) {
-        var workerSock: Socket? = null
-        try {
-            if (workerPorts.isEmpty()) {
-                clientSock.close()
-                return
-            }
-            val pickIdx = (roundRobinIndex.getAndIncrement() and Int.MAX_VALUE) % workerPorts.size
-            val targetPort = workerPorts[pickIdx]
-
-            workerSock = Socket()
-            workerSock.tcpNoDelay = true
-            workerSock.sendBufferSize = 65536
-            workerSock.receiveBufferSize = 65536
-            workerSock.connect(InetSocketAddress("127.0.0.1", targetPort), 5000)
-
-            val cIn = clientSock.getInputStream()
-            val cOut = clientSock.getOutputStream()
-            val wIn = workerSock.getInputStream()
-            val wOut = workerSock.getOutputStream()
-
-            val upstreamJob = balancerPool.submit {
-                try {
-                    val buf = ByteArray(32768)
-                    while (isRunning) {
-                        val n = cIn.read(buf)
-                        if (n == -1) break
-                        wOut.write(buf, 0, n)
-                        wOut.flush()
-                    }
-                } catch (_: Throwable) {
-                } finally {
-                    try { workerSock.close() } catch (_: Throwable) {}
-                }
-            }
-
-            val buf = ByteArray(32768)
-            while (isRunning) {
-                val n = wIn.read(buf)
-                if (n == -1) break
-                cOut.write(buf, 0, n)
-                cOut.flush()
-            }
-            upstreamJob.cancel(true)
-        } catch (_: Throwable) {
-        } finally {
-            try { clientSock.close() } catch (_: Throwable) {}
-            try { workerSock?.close() } catch (_: Throwable) {}
-        }
-    }
-
     fun stopSlowDns() {
         isRunning = false
-        try { balancerServer?.close() } catch (_: Throwable) {}
-        balancerServer = null
+        lastClientAddr = null
+        try { localUdpProxy?.close() } catch (_: Throwable) {}
+        localUdpProxy = null
 
-        workerProcesses.forEach { proc ->
-            try {
-                proc.destroy()
-                proc.destroyForcibly()
-            } catch (_: Throwable) {}
+        upstreamUdpPool.forEach { sock ->
+            try { sock.close() } catch (_: Throwable) {}
         }
-        workerProcesses.clear()
+        upstreamUdpPool.clear()
+
+        try {
+            dnsttProcess?.destroy()
+            dnsttProcess?.destroyForcibly()
+        } catch (_: Throwable) {}
+        dnsttProcess = null
     }
 }
