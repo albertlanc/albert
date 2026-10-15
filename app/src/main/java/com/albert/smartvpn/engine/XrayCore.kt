@@ -33,24 +33,30 @@ object XrayCore {
     fun startLocalPort80Relay(remoteHost: String, remotePort: Int): Int {
         stopLocalPort80Relay()
         return try {
-            val server = ServerSocket(0, 128, InetAddress.getByName("127.0.0.1"))
+            val server = ServerSocket(0, 256, InetAddress.getByName("127.0.0.1"))
             port80RelayServer = server
             relayRunning = true
             val localRelayPort = server.localPort
             val cleanHost = remoteHost.trim()
 
-            thread(start = true, name = "VLESS-Port80-Relay") {
+            thread(start = true, name = "VLESS-BBR-Port80-Relay") {
                 while (relayRunning) {
                     try {
                         val clientSock = server.accept() ?: break
                         clientSock.tcpNoDelay = true
+                        clientSock.trafficClass = 0x18
+                        clientSock.sendBufferSize = 262144
+                        clientSock.receiveBufferSize = 262144
                         relayPool.execute {
                             var remoteSock: Socket? = null
                             try {
                                 remoteSock = Socket().apply {
+                                    setPerformancePreferences(0, 1, 2)
                                     tcpNoDelay = true
-                                    sendBufferSize = 131072
-                                    receiveBufferSize = 131072
+                                    keepAlive = true
+                                    trafficClass = 0x18
+                                    sendBufferSize = 262144
+                                    receiveBufferSize = 262144
                                     connect(InetSocketAddress(cleanHost, remotePort), 10000)
                                 }
                                 val cIn = clientSock.getInputStream()
@@ -60,12 +66,11 @@ object XrayCore {
 
                                 val upJob = relayPool.submit {
                                     try {
-                                        val buf = ByteArray(65536)
+                                        val buf = ByteArray(131072)
                                         while (relayRunning) {
                                             val n = cIn.read(buf)
                                             if (n == -1) break
                                             rOut.write(buf, 0, n)
-                                            if (cIn.available() == 0) rOut.flush()
                                         }
                                         rOut.flush()
                                     } catch (_: Throwable) {
@@ -74,12 +79,11 @@ object XrayCore {
                                     }
                                 }
 
-                                val buf = ByteArray(65536)
+                                val buf = ByteArray(131072)
                                 while (relayRunning) {
                                     val n = rIn.read(buf)
                                     if (n == -1) break
                                     cOut.write(buf, 0, n)
-                                    if (rIn.available() == 0) cOut.flush()
                                 }
                                 cOut.flush()
                                 upJob.cancel(true)
