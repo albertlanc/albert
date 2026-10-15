@@ -13,7 +13,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -244,7 +243,6 @@ fun NetworkToolsScreen(
                             )
                         }
 
-                        // Step 1: Open Android System Hotspot Settings
                         OutlinedButton(
                             onClick = {
                                 try {
@@ -265,7 +263,6 @@ fun NetworkToolsScreen(
                             Text("1. Open Phone Wi-Fi Hotspot Settings")
                         }
 
-                        // Step 2: Big Toggle Button to Start / Stop Sharing VPN Connection
                         Button(
                             onClick = {
                                 if (hotshareEnabled) {
@@ -290,7 +287,6 @@ fun NetworkToolsScreen(
                             )
                         }
 
-                        // Live Proxy Endpoint Box
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             shape = RoundedCornerShape(12.dp),
