@@ -251,4 +251,236 @@ class SmartVpnService : VpnService() {
         val isReality = profile.security.equals("reality", ignoreCase = true) || profile.pbk.isNotBlank()
         val isTls = when {
             isReality -> false
-            profile.port in listOf(80, 8080, 8880, 2052, 2082, 2086, 209
+            profile.port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095) &&
+                !profile.security.equals("tls", ignoreCase = true) -> false
+            profile.security.equals("none", ignoreCase = true) -> false
+            else -> true
+        }
+        val securityMode = when {
+            isReality -> "reality"
+            isTls -> "tls"
+            else -> "none"
+        }
+
+        // Bypasses Xray-core's plain VLESS Port-80 restriction by routing through 127.0.0.1 loopback
+        val (outboundAddress, outboundPort) = if (protocolLower == "vless" && securityMode == "none") {
+            val relayPort = XrayCore.startLocalPort80Relay(serverHost, profile.port)
+            Pair("127.0.0.1", relayPort)
+        } else {
+            Pair(serverHost, profile.port)
+        }
+
+        val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") {
+            """, "flow": "${profile.flow.trim()}" """
+        } else {
+            ""
+        }
+
+        val outboundSettings = when (protocolLower) {
+            "trojan" -> """
+                "servers": [{
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
+                  "password": "${profile.uuid.trim()}"
+                }]
+            """.trimIndent()
+            "vmess" -> """
+                "vnext": [{
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
+                  "users": [{
+                    "id": "${profile.uuid.trim()}",
+                    "alterId": 0,
+                    "security": "auto"
+                  }]
+                }]
+            """.trimIndent()
+            else -> """
+                "vnext": [{
+                  "address": "$outboundAddress",
+                  "port": $outboundPort,
+                  "users": [{
+                    "id": "${profile.uuid.trim()}",
+                    "encryption": "none"$flowField
+                  }]
+                }]
+            """.trimIndent()
+        }
+
+        val verifyNames = if (!sniHost.equals(serverHost, ignoreCase = true)) {
+            "$sniHost,$serverHost"
+        } else {
+            sniHost
+        }
+
+        val securityBlock = when {
+            isReality -> """
+                "realitySettings": {
+                  "serverName": "$sniHost",
+                  "fingerprint": "chrome",
+                  "publicKey": "${profile.pbk.trim()}",
+                  "shortId": "${profile.sid.trim()}"
+                },
+            """.trimIndent()
+            isTls -> """
+                "tlsSettings": {
+                  "serverName": "$sniHost",
+                  "verifyPeerCertByName": "$verifyNames",
+                  "alpn": ["http/1.1"]
+                },
+            """.trimIndent()
+            else -> ""
+        }
+
+        val transportBlock = when (networkType) {
+            "grpc" -> """
+                "grpcSettings": {
+                  "serviceName": "${wsPath.removePrefix("/")}"
+                }
+            """.trimIndent()
+            "tcp" -> """
+                "tcpSettings": {}
+            """.trimIndent()
+            else -> """
+                "wsSettings": {
+                  "path": "$wsPath",
+                  "host": "$sniHost"
+                }
+            """.trimIndent()
+        }
+
+        return """
+        {
+          "log": { "loglevel": "warning" },
+          "inbounds": [{
+            "tag": "socks-in",
+            "port": $socksPort,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": { "auth": "noauth", "udp": true }
+          }],
+          "outbounds": [{
+            "tag": "proxy",
+            "protocol": "$protocolLower",
+            "settings": {
+              $outboundSettings
+            },
+            "streamSettings": {
+              "network": "$networkType",
+              "security": "$securityMode",
+              $securityBlock
+              $transportBlock
+            }
+          }]
+        }
+        """.trimIndent()
+    }
+
+    private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
+        val cleanAddr = profile.wgAddress.trim().ifBlank { "10.0.0.2/32" }
+        val pskField = if (profile.wgPresharedKey.isNotBlank()) {
+            """, "preSharedKey": "${profile.wgPresharedKey.trim()}" """
+        } else {
+            ""
+        }
+        return """
+        {
+          "log": { "loglevel": "warning" },
+          "inbounds": [{
+            "tag": "socks-in",
+            "port": $socksPort,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": { "auth": "noauth", "udp": true }
+          }],
+          "outbounds": [{
+            "tag": "proxy",
+            "protocol": "wireguard",
+            "settings": {
+              "secretKey": "${profile.wgPrivateKey.trim()}",
+              "address": ["$cleanAddr"],
+              "peers": [{
+                "publicKey": "${profile.wgPublicKey.trim()}",
+                "endpoint": "${profile.server.trim()}:${profile.port}"$pskField
+              }],
+              "mtu": ${profile.wgMtu.coerceIn(1280, 1500)}
+            }
+          }]
+        }
+        """.trimIndent()
+    }
+
+    private fun stopVpnPipeline(resetStatus: Boolean) {
+        serviceScope.launch {
+            try {
+                Tun2Socks.stopTunnel()
+                XrayCore.StopXray()
+                SshEngine.stopSshTunnel()
+                SlowDnsEngine.stopSlowDns()
+                Hysteria2Engine.stopHysteria2()
+                vpnInterface?.close()
+                vpnInterface = null
+                if (resetStatus) {
+                    VpnStateBridge.updateState("DISCONNECTED", "Idle")
+                    VpnStateBridge.addLog("Tunnel disconnected.")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error stopping VPN: ${t.message}")
+            } finally {
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (_: Throwable) {}
+                stopSelf()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Smart VPN Connection Status",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Shows active Smart VPN key notification and connection status"
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(true)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(title: String, contentText: String): Notification {
+        val openAppIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, SmartVpnService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(contentText)
+            .setSmallIcon(R.drawable.ic_vpn_key)
+            .setContentIntent(openAppIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+}
