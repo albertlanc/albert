@@ -1,4 +1,4 @@
-name: Build Smart VPN with Native Engines
+name: Build Smart VPN v2.0
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
       - name: Apply NDK Path
         run: echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
 
-      - name: Build libXray (Go - Slim ARM64 & ARMv7 Only)
+      - name: Build libXray (Go - ARM64 & ARMv7)
         run: |
           git clone https://github.com/XTLS/libXray.git
           cd libXray
@@ -68,13 +68,12 @@ jobs:
           CGO_ENABLED=1 GOOS=android GOARCH=arm GOARM=7 CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi26-clang go build -buildmode=pie -trimpath -ldflags="-s -w -checklinkname=0" -o ../../app/src/main/jniLibs/armeabi-v7a/libdnstt.so .
           cd ../..
 
-      - name: Build Hysteria2 Client (Android NDK PIE)
+      - name: Fetch & Build Hysteria2 Native Engine
         run: |
-          git clone --depth 1 https://github.com/apernet/hysteria.git
-          cd hysteria
-          CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang go build -buildmode=pie -trimpath -ldflags="-s -w -checklinkname=0" -o ../app/src/main/jniLibs/arm64-v8a/libhysteria2.so ./app || true
-          CGO_ENABLED=1 GOOS=android GOARCH=arm GOARM=7 CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi26-clang go build -buildmode=pie -trimpath -ldflags="-s -w -checklinkname=0" -o ../app/src/main/jniLibs/armeabi-v7a/libhysteria2.so ./app || true
-          cd ..
+          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+          curl -L --fail https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-arm64 -o app/src/main/jniLibs/arm64-v8a/libhysteria2.so || true
+          curl -L --fail https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-arm -o app/src/main/jniLibs/armeabi-v7a/libhysteria2.so || true
+          chmod +x app/src/main/jniLibs/arm64-v8a/libhysteria2.so app/src/main/jniLibs/armeabi-v7a/libhysteria2.so || true
 
       - name: Strip Native Binaries
         run: |
@@ -89,10 +88,10 @@ jobs:
       - name: Build Debug APK
         run: |
           gradle assembleDebug --stacktrace
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SmartVPN-v6.0-BBR.apk
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SmartVPN-v2.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartVPN-v6.0-BBR
-          path: app/build/outputs/apk/debug/SmartVPN-v6.0-BBR.apk
+          name: SmartVPN-v2.0
+          path: app/build/outputs/apk/debug/SmartVPN-v2.0.apk
