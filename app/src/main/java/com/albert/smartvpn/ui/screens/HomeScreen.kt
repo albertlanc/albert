@@ -116,13 +116,12 @@ fun HomeScreen(
         label = "InnerRing"
     )
 
-    // Compute accurate Protocol & Security Layer labels for VLESS, VMess, Trojan, SSH, SlowDNS, etc.
-    val protocolEngineDisplay = remember(activeProfile, isConnected) {
+    val protocolEngineDisplay = remember(activeProfile) {
         if (activeProfile == null) "READY"
         else "${activeProfile.protocol.uppercase()} (${activeProfile.port})"
     }
 
-    val securityLayerDisplay = remember(activeProfile, isConnected) {
+    val securityLayerDisplay = remember(activeProfile) {
         if (activeProfile == null) {
             "BBR / TLS"
         } else {
@@ -335,7 +334,7 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // PING BUTTON DIRECTLY BENEATH "SYSTEM STANDBY • READY" (ENABLED ONLY WHEN CONNECTED)
+                // PING BUTTON DIRECTLY BENEATH STATUS (ENABLED ONLY WHEN CONNECTED)
                 Button(
                     onClick = onPingClick,
                     enabled = isConnected && !isPinging,
@@ -422,7 +421,7 @@ fun HomeScreen(
             }
         }
 
-        // 3. TELEMETRY & ENGINE STATS GRID (WITH FIXED SECURITY LAYER DISPLAY)
+        // 3. TELEMETRY & ENGINE STATS GRID
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -556,4 +555,4 @@ private fun TelemetryStatCard(
         }
     }
 }
-// === END OF FILE ===
+// === END OF FILE 11 ===
