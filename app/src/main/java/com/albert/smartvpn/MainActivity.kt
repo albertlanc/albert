@@ -278,7 +278,7 @@ class MainActivity : ComponentActivity() {
                 SmartVpnCrestLogo(size = 110.dp)
                 Spacer(modifier = Modifier.height(20.dp))
                 Text("SMART VPN v2.0", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
-                Spacer(modifier = Modifier.height(8.sp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text("High-Speed Secure Tunnel & Multi-Protocol Core", fontSize = 12.sp, color = Color(0xFF00F0FF), textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(onClick = onEnterNow, shape = RoundedCornerShape(12.dp)) {
