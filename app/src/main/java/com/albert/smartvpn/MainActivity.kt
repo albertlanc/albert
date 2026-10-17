@@ -88,7 +88,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SmartVpnTheme {
-                // Stage 0 = Done, Stage 1 = Animated Cinema Video Graphics, Stage 2 = Feature Splash Screen
                 var introStage by remember {
                     mutableIntStateOf(if (!VpnStateBridge.hasShownSplash && !VpnStateBridge.isConnected.value) 1 else 0)
                 }
@@ -301,33 +300,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * STAGE 1: Pre-Splash Animated 3D Cyber-Globe & Warp Tunnel Motion Graphics Cinema Scene
-     */
     @Composable
     private fun CyberCinemaVideoIntroScreen(onSkip: () -> Unit) {
         val infiniteTransition = rememberInfiniteTransition(label = "Cinema")
-        val warpProgress by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
-            label = "Warp"
-        )
-        val globeAngle by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(tween(4500, easing = LinearEasing)),
-            label = "Globe"
-        )
+        val warpProgress by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "Warp")
+        val globeAngle by infiniteTransition.animateFloat(0f, 360f, infiniteRepeatable(tween(4500, easing = LinearEasing)), label = "Globe")
 
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0xFF0E2A66), Color(0xFF04091A), Color(0xFF01030A))
-                    )
-                ),
+            modifier = Modifier.fillMaxSize().background(
+                Brush.radialGradient(listOf(Color(0xFF0E2A66), Color(0xFF04091A), Color(0xFF01030A)))
+            ),
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -335,93 +317,46 @@ class MainActivity : ComponentActivity() {
                 val cy = size.height / 2f
                 val maxR = size.minDimension * 0.45f
 
-                // Animated Warp-Speed Laser Beams radiating from the core
                 for (i in 0 until 24) {
                     val angle = Math.toRadians((i * 15.0) + globeAngle * 0.4)
                     val innerR = maxR * 0.25f * warpProgress
                     val outerR = maxR * (0.45f + 0.55f * warpProgress)
-                    val sx = cx + (innerR * cos(angle)).toFloat()
-                    val sy = cy + (innerR * sin(angle)).toFloat()
-                    val ex = cx + (outerR * cos(angle)).toFloat()
-                    val ey = cy + (outerR * sin(angle)).toFloat()
                     drawLine(
                         color = if (i % 2 == 0) Color(0xFF00F0FF).copy(alpha = 0.65f) else Color(0xFF00E676).copy(alpha = 0.55f),
-                        start = Offset(sx, sy),
-                        end = Offset(ex, ey),
+                        start = Offset(cx + (innerR * cos(angle)).toFloat(), cy + (innerR * sin(angle)).toFloat()),
+                        end = Offset(cx + (outerR * cos(angle)).toFloat(), cy + (outerR * sin(angle)).toFloat()),
                         strokeWidth = 3.dp.toPx(),
                         cap = StrokeCap.Round
                     )
                 }
 
-                // 3D Holographic Cyber Globe Rings
                 for (ring in 1..4) {
-                    drawCircle(
-                        color = Color(0xFF00F0FF).copy(alpha = 0.25f),
-                        radius = maxR * (ring / 5f),
-                        center = Offset(cx, cy),
-                        style = Stroke(width = 2.dp.toPx())
-                    )
+                    drawCircle(Color(0xFF00F0FF).copy(alpha = 0.25f), maxR * (ring / 5f), Offset(cx, cy), style = Stroke(2.dp.toPx()))
                 }
                 rotate(globeAngle) {
-                    drawArc(
-                        color = Color(0xFFFFC107),
-                        startAngle = 0f,
-                        sweepAngle = 140f,
-                        useCenter = false,
-                        topLeft = Offset(cx - maxR * 0.6f, cy - maxR * 0.6f),
-                        size = androidx.compose.ui.geometry.Size(maxR * 1.2f, maxR * 1.2f),
-                        style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                    drawArc(
-                        color = Color(0xFF00E676),
-                        startAngle = 180f,
-                        sweepAngle = 140f,
-                        useCenter = false,
-                        topLeft = Offset(cx - maxR * 0.6f, cy - maxR * 0.6f),
-                        size = androidx.compose.ui.geometry.Size(maxR * 1.2f, maxR * 1.2f),
-                        style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
-                    )
+                    drawArc(Color(0xFFFFC107), 0f, 140f, false, Offset(cx - maxR * 0.6f, cy - maxR * 0.6f), androidx.compose.ui.geometry.Size(maxR * 1.2f, maxR * 1.2f), style = Stroke(5.dp.toPx(), cap = StrokeCap.Round))
+                    drawArc(Color(0xFF00E676), 180f, 140f, false, Offset(cx - maxR * 0.6f, cy - maxR * 0.6f), androidx.compose.ui.geometry.Size(maxR * 1.2f, maxR * 1.2f), style = Stroke(5.dp.toPx(), cap = StrokeCap.Round))
                 }
             }
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(24.dp)
-            ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                 SmartVpnCrestLogo(size = 112.dp)
                 Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    text = "SMART VPN ULTRA",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White,
-                    letterSpacing = 3.sp
-                )
+                Text("SMART VPN ULTRA", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 3.sp)
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "v6.0 BBR QUANTUM ACCELERATION ENGINE",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFFC107),
-                    letterSpacing = 1.5.sp
-                )
+                Text("v6.0 BBR QUANTUM ACCELERATION ENGINE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFC107), letterSpacing = 1.5.sp)
                 Spacer(modifier = Modifier.height(32.dp))
-                TextButton(onClick = onSkip) {
-                    Text("Continue →", color = Color(0xFF00F0FF), fontWeight = FontWeight.Bold)
-                }
+                TextButton(onClick = onSkip) { Text("Continue →", color = Color(0xFF00F0FF), fontWeight = FontWeight.Bold) }
             }
         }
     }
 
-    /**
-     * STAGE 2: Detailed Feature & Capability Showcase Splash Screen
-     */
     @Composable
     private fun QuantumCyberSplashScreen(onEnterNow: () -> Unit) {
         val infiniteTransition = rememberInfiniteTransition(label = "Splash")
         val orbitAngle by infiniteTransition.animateFloat(0f, 360f, infiniteRepeatable(tween(3600, easing = LinearEasing)), label = "Orbit")
         var progressStep by remember { mutableIntStateOf(1) }
-        LaunchedEffect(Unit) { for (i in 1..5) { progressStep = i; delay(480L) } }
+        LaunchedEffect(Unit) { for (i in 1..5) { progressStep = i; delay(500L) } }
 
         Box(
             modifier = Modifier.fillMaxSize().background(
@@ -429,36 +364,36 @@ class MainActivity : ComponentActivity() {
             )
         ) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp),
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(modifier = Modifier.size(116.dp), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(136.dp), contentAlignment = Alignment.Center) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             rotate(orbitAngle) {
                                 drawArc(Color(0xFFFFC107), 0f, 120f, false, style = Stroke(3.5.dp.toPx(), cap = StrokeCap.Round))
                                 drawArc(Color(0xFF00E676), 180f, 120f, false, style = Stroke(3.5.dp.toPx(), cap = StrokeCap.Round))
                             }
                         }
-                        SmartVpnCrestLogo(size = 80.dp)
+                        SmartVpnCrestLogo(size = 90.dp)
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("SMART VPN ULTRA v6.0", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 1.8.sp)
-                    Text("WHAT SMART VPN CAN DO • CORE CAPABILITIES", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00F0FF), textAlign = TextAlign.Center)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("SMART VPN ULTRA", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
+                    Text("NEXT-GEN MULTI-PROTOCOL STEALTH & PRIVACY ENGINE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00F0FF), textAlign = TextAlign.Center)
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
-                    SplashFeatureRow(Icons.Default.RocketLaunch, Color(0xFFFFC107), "BBRv3 Overall Speed Congestion Engine", "Maximizes throughput on SSH+WS+SNI+Payload, VLESS, VMess (443 & 80), Trojan, WireGuard & Hysteria2.")
-                    SplashFeatureRow(Icons.Default.Dns, Color(0xFF00E676), "Auto-Engaged SlowDNS Multi-Port Boost", "Connects SlowDNS on any port and automatically activates 15x parallel DNS session boosting on connect.")
-                    SplashFeatureRow(Icons.Default.Fingerprint, Color(0xFF00F0FF), "Hardware ID (HWID) AES-256-GCM Vault", "Locks exported .svpn files, QR codes, and Cloud tokens to a specific phone's Hardware ID & passphrase.")
-                    SplashFeatureRow(Icons.Default.Speed, Color(0xFF7C4DFF), "Live Tunnel Ping, GeoIP & Wi-Fi Hotshare", "One-tap live tunnel latency & speed ping on the home screen, plus Wi-Fi Hotspot VPN tethering.")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    SplashFeatureRow(Icons.Default.Hub, Color(0xFF00F0FF), "8-in-1 Multi-Protocol Core + SlowDNS Boost", "Direct SSH, SSH+WS+SNI+Payload, Pure SSH+SSL, SlowDNS Boost, VLESS, VMess, Trojan, WireGuard & Hysteria2.")
+                    SplashFeatureRow(Icons.Default.Bolt, Color(0xFF00E676), "4x Multi-Session Turbo & SNI Bypass", "Parallel SSH transport pooling with 8MB windows and TLS 1.3 SNI fronting on ports 443 & 80.")
+                    SplashFeatureRow(Icons.Default.Fingerprint, Color(0xFFFFC107), "AES-256-GCM Hardware Enclave Security", "Cryptographic Device ID (HWID) config binding—files, QR codes & Cloud tokens cannot be decrypted outside the locked phone.")
+                    SplashFeatureRow(Icons.Default.Radar, Color(0xFF7C4DFF), "One-Tap Wi-Fi Hotshare & Pro Diagnostics", "Share your VPN over Wi-Fi Hotspot (HTTP & SOCKS5), plus built-in Ping tester, GeoIP lookup & SNI Bug Host scanner.")
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     LinearProgressIndicator(progress = progressStep / 5f, color = Color(0xFFFFC107), trackColor = Color(0xFF152657), modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("BBR CORE READY • ${progressStep * 20}%", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFF9FB3C8))
+                        Text("INITIALIZING ENGINES • ${progressStep * 20}%", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFF9FB3C8))
                         TextButton(onClick = onEnterNow) { Text("Launch Dashboard →", color = Color(0xFF00E676), fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                     }
                 }
@@ -473,14 +408,14 @@ class MainActivity : ComponentActivity() {
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
         ) {
-            Row(modifier = Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
                     Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
-                    Text(subtitle, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFF9FB3C8))
+                    Text(subtitle, fontSize = 11.sp, lineHeight = 15.sp, color = Color(0xFF9FB3C8))
                 }
             }
         }
@@ -490,8 +425,8 @@ class MainActivity : ComponentActivity() {
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Ultra v6.0 BBR")
-                putExtra(Intent.EXTRA_TEXT, "Download Smart VPN Ultra v6.0 — BBR Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, SlowDNS Auto-Boost, VLESS/VMess/Trojan, WireGuard & Hysteria2).")
+                putExtra(Intent.EXTRA_SUBJECT, "Smart VPN Ultra")
+                putExtra(Intent.EXTRA_TEXT, "Download Smart VPN Ultra — Multi-Protocol Stealth Tunnel (SSH, WS+SNI+Payload, SlowDNS Boost, VLESS/VMess/Trojan, WireGuard & Hysteria2).")
             }
             startActivity(Intent.createChooser(sendIntent, "Share Smart VPN Ultra"))
         } catch (_: Throwable) {}
@@ -566,4 +501,4 @@ fun SmartVpnCrestLogo(size: Dp) {
         drawPath(boltPath, color = Color(0xFFFFC107))
     }
 }
-// === END OF FILE ===
+// === END OF FILE 13 ===
