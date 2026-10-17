@@ -4,6 +4,8 @@ import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -14,7 +16,7 @@ import kotlin.concurrent.thread
 object XrayCore {
     private const val TAG = "XrayCore"
     private var port80RelayServer: ServerSocket? = null
-    private val relayPool = Executors.newCachedThreadPool()
+    private val relayPool = Executors.newFixedThreadPool(20)
     @Volatile private var relayRunning = false
 
     private fun invokeLibXray(requestJson: String): String? {
@@ -33,59 +35,56 @@ object XrayCore {
     fun startLocalPort80Relay(remoteHost: String, remotePort: Int): Int {
         stopLocalPort80Relay()
         return try {
-            val server = ServerSocket(0, 256, InetAddress.getByName("127.0.0.1"))
+            val server = ServerSocket(0, 128, InetAddress.getByName("127.0.0.1"))
             port80RelayServer = server
             relayRunning = true
             val localRelayPort = server.localPort
             val cleanHost = remoteHost.trim()
 
-            thread(start = true, name = "VLESS-BBR-Port80-Relay") {
+            thread(start = true, name = "VLESS-Port80-Relay") {
                 while (relayRunning) {
                     try {
                         val clientSock = server.accept() ?: break
                         clientSock.tcpNoDelay = true
-                        clientSock.trafficClass = 0x18
-                        clientSock.sendBufferSize = 262144
-                        clientSock.receiveBufferSize = 262144
+                        clientSock.sendBufferSize = 131072
+                        clientSock.receiveBufferSize = 131072
                         relayPool.execute {
                             var remoteSock: Socket? = null
                             try {
                                 remoteSock = Socket().apply {
-                                    setPerformancePreferences(0, 1, 2)
                                     tcpNoDelay = true
                                     keepAlive = true
-                                    trafficClass = 0x18
-                                    sendBufferSize = 262144
-                                    receiveBufferSize = 262144
+                                    sendBufferSize = 131072
+                                    receiveBufferSize = 131072
                                     connect(InetSocketAddress(cleanHost, remotePort), 10000)
                                 }
-                                val cIn = clientSock.getInputStream()
-                                val cOut = clientSock.getOutputStream()
-                                val rIn = remoteSock.getInputStream()
-                                val rOut = remoteSock.getOutputStream()
+                                val cIn = BufferedInputStream(clientSock.getInputStream(), 65536)
+                                val cOut = BufferedOutputStream(clientSock.getOutputStream(), 65536)
+                                val rIn = BufferedInputStream(remoteSock.getInputStream(), 65536)
+                                val rOut = BufferedOutputStream(remoteSock.getOutputStream(), 65536)
 
                                 val upJob = relayPool.submit {
                                     try {
-                                        val buf = ByteArray(131072)
+                                        val buf = ByteArray(65536)
                                         while (relayRunning) {
                                             val n = cIn.read(buf)
                                             if (n == -1) break
                                             rOut.write(buf, 0, n)
+                                            rOut.flush()
                                         }
-                                        rOut.flush()
                                     } catch (_: Throwable) {
                                     } finally {
                                         try { remoteSock.close() } catch (_: Throwable) {}
                                     }
                                 }
 
-                                val buf = ByteArray(131072)
+                                val buf = ByteArray(65536)
                                 while (relayRunning) {
                                     val n = rIn.read(buf)
                                     if (n == -1) break
                                     cOut.write(buf, 0, n)
+                                    cOut.flush()
                                 }
-                                cOut.flush()
                                 upJob.cancel(true)
                             } catch (_: Throwable) {
                             } finally {
@@ -166,4 +165,4 @@ object XrayCore {
 
     fun XrayVersion(): String = "Xray-core"
 }
-// === END OF FILE 8 ===
+// === END OF FILE 9 ===
