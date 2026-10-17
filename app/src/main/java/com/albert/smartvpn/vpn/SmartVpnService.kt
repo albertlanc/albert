@@ -15,7 +15,6 @@ import com.albert.smartvpn.MainActivity
 import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
-import com.albert.smartvpn.engine.HotshareServer
 import com.albert.smartvpn.engine.Hysteria2Engine
 import com.albert.smartvpn.engine.SlowDnsEngine
 import com.albert.smartvpn.engine.SshEngine
@@ -86,7 +85,7 @@ class SmartVpnService : VpnService() {
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "Connecting...")
-        promoteForeground("Smart VPN Ultra", "Connecting...")
+        promoteForeground("Smart VPN v2.0", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
@@ -102,20 +101,9 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
-                if (profile.lockedDeviceId.isNotBlank() &&
-                    !profile.lockedDeviceId.trim().equals(myDeviceId, ignoreCase = true)
-                ) {
-                    VpnStateBridge.addLog("HWID Lock Rejected.")
-                    VpnStateBridge.updateState("DISCONNECTED", "HWID Locked")
-                    stopVpnPipeline(resetStatus = false)
-                    return@launch
-                }
-
                 val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
                 val proto = profile.protocol.uppercase()
 
-                // Auto-enable SlowDNS Boost ONLY when a SLOWDNS profile is connecting
                 VpnStateBridge.slowDnsBoostEnabled.value = (proto == "SLOWDNS")
 
                 val engineStarted = when {
@@ -188,15 +176,11 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                if (VpnStateBridge.hotshareEnabled.value) {
-                    HotshareServer.startHotshare(localSocksPort)
-                }
-
                 val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart VPN Ultra")
+                    .setSession("Smart VPN v2.0")
                     .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
@@ -216,9 +200,9 @@ class SmartVpnService : VpnService() {
                 }
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
-                VpnStateBridge.updateState("CONNECTED", "Connected (${profile.protocol} + BBR)")
-                VpnStateBridge.addLog("Connected (BBR Speed Active).")
-                promoteForeground("Smart VPN Ultra • Connected", "Tunnel Active (${profile.name})")
+                VpnStateBridge.updateState("CONNECTED", "Connected (${profile.protocol})")
+                VpnStateBridge.addLog("Connected successfully.")
+                promoteForeground("Smart VPN v2.0 • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.slowDnsBoostEnabled.value = false
@@ -274,7 +258,7 @@ class SmartVpnService : VpnService() {
             else -> "\"wsSettings\": {\"path\": \"$wsPath\", \"host\": \"$sniHost\"}"
         }
 
-        return """{"log":{"loglevel":"none"},"policy":{"levels":{"0":{"handshake":4,"connIdle":300,"uplinkOnly":1,"downlinkOnly":1,"bufferSize":10240}}},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}}]}"""
+        return """{"log":{"loglevel":"none"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}}]}"""
     }
 
     private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
@@ -286,7 +270,7 @@ class SmartVpnService : VpnService() {
     private fun stopVpnPipeline(resetStatus: Boolean) {
         activeConnectJob?.cancel()
         VpnStateBridge.slowDnsBoostEnabled.value = false
-        VpnStateBridge.pingResultText.value = "Tap Ping to test active tunnel latency & speed"
+        VpnStateBridge.pingResultText.value = "Tap Ping to test active tunnel latency"
         serviceScope.launch {
             try {
                 Tun2Socks.stopTunnel()
@@ -347,4 +331,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE 9 ===
+// === END OF FILE 10 ===
