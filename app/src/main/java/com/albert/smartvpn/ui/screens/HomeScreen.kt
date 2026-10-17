@@ -47,7 +47,6 @@ fun HomeScreen(
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
     val pingResultText by VpnStateBridge.pingResultText.collectAsState()
     val isPinging by VpnStateBridge.isPinging.collectAsState()
-    val localSocksPort by VpnStateBridge.localSocksPort.collectAsState()
     val customDns1 by VpnStateBridge.customDns1.collectAsState()
     val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
 
@@ -123,7 +122,7 @@ fun HomeScreen(
 
     val securityLayerDisplay = remember(activeProfile) {
         if (activeProfile == null) {
-            "BBR / TLS"
+            "SECURE / TLS"
         } else {
             val proto = activeProfile.protocol.uppercase()
             val sec = activeProfile.security.uppercase()
@@ -134,7 +133,7 @@ fun HomeScreen(
                     "$proto • $tlsLabel"
                 }
                 proto == "SLOWDNS" -> "SLOWDNS • DNSTT"
-                proto.contains("SSH") -> "$proto • ${if (sec == "TLS" || activeProfile.port == 443) "TLSv1.3" else "BBR-SSH"}"
+                proto.contains("SSH") -> "$proto • ${if (sec == "TLS" || activeProfile.port == 443) "TLSv1.3" else "DIRECT"}"
                 proto == "WIREGUARD" -> "WIREGUARD • NOISE"
                 proto == "HYSTERIA2" -> "HYSTERIA2 • QUIC"
                 else -> "$proto • $sec"
@@ -326,7 +325,7 @@ fun HomeScreen(
                 )
 
                 Text(
-                    text = if (isConnected) "BBR TURBO STREAM ACTIVE • CONNECTED" else "SYSTEM STANDBY • READY",
+                    text = if (isConnected) "TUNNEL STREAM ACTIVE • CONNECTED" else "SYSTEM STANDBY • READY",
                     style = MaterialTheme.typography.labelSmall,
                     color = accentColor,
                     letterSpacing = 1.3.sp
@@ -447,8 +446,8 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             TelemetryStatCard(
-                title = "BBR CONGESTION",
-                value = "BBRv3 ACTIVE",
+                title = "TUNNEL STREAM",
+                value = "OPTIMIZED",
                 icon = Icons.Default.RocketLaunch,
                 accent = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier.weight(1f)
@@ -499,7 +498,7 @@ fun HomeScreen(
                     }
                 }
                 Text(
-                    text = "v6.0 BBR",
+                    text = "v2.0",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.Bold
@@ -555,4 +554,4 @@ private fun TelemetryStatCard(
         }
     }
 }
-// === END OF FILE 11 ===
+// === END OF FILE 12 ===
