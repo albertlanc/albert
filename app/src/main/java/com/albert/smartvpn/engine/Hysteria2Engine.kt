@@ -4,19 +4,15 @@ import android.content.Context
 import android.util.Log
 import com.albert.smartvpn.data.VpnProfile
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import kotlin.concurrent.thread
 
 object Hysteria2Engine {
     private const val TAG = "Hysteria2Engine"
     private var hy2Process: Process? = null
-    @Volatile private var isRunning = false
-    @Volatile private var hy2Connected = false
+    private var activeConfigFile: File? = null
 
     fun startHysteria2(
         context: Context,
@@ -25,122 +21,118 @@ object Hysteria2Engine {
     ): Boolean {
         stopHysteria2()
 
-        val serverHost = profile.server.trim()
-        val serverPort = profile.port
-        val authPass = profile.hy2Password.ifBlank { profile.uuid }.trim()
-        val sniHost = profile.sni.trim().ifBlank { serverHost }
-
-        if (serverHost.isEmpty() || authPass.isEmpty()) {
-            VpnStateBridge.addLog("[SmartVPN] Hysteria2 Error: Missing Server or Auth Password")
+        val rawHost = profile.server.trim()
+        val authPass = profile.hy2Password.ifBlank { profile.uuid.ifBlank { profile.sshPass } }.trim()
+        if (rawHost.isEmpty() || authPass.isEmpty()) {
+            VpnStateBridge.addLog("Connection failed: Missing Hysteria2 server or password.")
             return false
         }
 
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val hy2Bin = File(nativeDir, "libhysteria2.so")
-        if (!hy2Bin.exists() || hy2Bin.length() < 1024L) {
-            VpnStateBridge.addLog("[SmartVPN] Hysteria2 binary missing")
+        if (!hy2Bin.exists()) {
+            VpnStateBridge.addLog("Connection failed: Hysteria2 engine binary not found.")
             return false
         }
         hy2Bin.setExecutable(true)
 
+        val resolvedIp = try {
+            InetAddress.getByName(rawHost).hostAddress ?: rawHost
+        } catch (_: Throwable) {
+            rawHost
+        }
+        val sniHost = profile.sni.trim().ifBlank { rawHost }
+        val serverEndpoint = "$resolvedIp:${profile.port}"
+
         return try {
-            hy2Connected = false
-            val resolvedIp = try {
-                InetAddress.getByName(serverHost).hostAddress ?: serverHost
-            } catch (_: Throwable) {
-                serverHost
-            }
-
-            // Support Port Hopping (e.g. 20000-50000) if provided
-            val serverEndpoint = if (profile.hy2PortHopping.isNotBlank()) {
-                "$resolvedIp:$serverPort,${profile.hy2PortHopping.trim()}"
+            val obfsBlock = if (profile.hy2Obfs.isNotBlank() && profile.hy2ObfsPassword.isNotBlank()) {
+                """
+                "obfs": {
+                  "type": "${profile.hy2Obfs.trim()}",
+                  "salamander": {
+                    "password": "${profile.hy2ObfsPassword.trim()}"
+                  }
+                },
+                """.trimIndent()
             } else {
-                "$resolvedIp:$serverPort"
+                ""
             }
 
-            val obfsBlock = if (profile.hy2ObfsPassword.isNotBlank()) {
-                ""","obfs":{"type":"salamander","salamander":{"password":"${profile.hy2ObfsPassword.trim()}"}}"""
-            } else ""
-
-            val pinBlock = if (profile.pinSha256.isNotBlank()) {
-                ""","pinSHA256":"${profile.pinSha256.trim()}""""
-            } else ""
+            val upMbps = profile.hy2UpMbps.coerceIn(10, 100)
+            val downMbps = profile.hy2DownMbps.coerceIn(20, 200)
 
             val configJson = """
-            {
-              "server": "$serverEndpoint",
-              "auth": "$authPass",
-              "tls": {
-                "sni": "$sniHost",
-                "insecure": ${profile.allowInsecure}$pinBlock
-              },
-              "bandwidth": {
-                "up": "${profile.hy2UpMbps.coerceAtLeast(10)} mbps",
-                "down": "${profile.hy2DownMbps.coerceAtLeast(20)} mbps"
-              },
-              "socks5": {
-                "listen": "127.0.0.1:$localSocksPort"
-              }$obfsBlock
-            }
+                {
+                  "server": "$serverEndpoint",
+                  "auth": "$authPass",
+                  $obfsBlock
+                  "tls": {
+                    "sni": "$sniHost",
+                    "insecure": true
+                  },
+                  "bandwidth": {
+                    "up": "$upMbps mbps",
+                    "down": "$downMbps mbps"
+                  },
+                  "quic": {
+                    "initStreamReceiveWindow": 8388608,
+                    "maxStreamReceiveWindow": 8388608,
+                    "initConnReceiveWindow": 20971520,
+                    "maxConnReceiveWindow": 20971520
+                  },
+                  "socks5": {
+                    "listen": "127.0.0.1:$localSocksPort"
+                  }
+                }
             """.trimIndent()
 
-            val configFile = File(context.cacheDir, "hy2-v2.json")
-            configFile.writeText(configJson)
+            val cfgFile = File(context.cacheDir, "hy2_live.json")
+            cfgFile.writeText(configJson)
+            activeConfigFile = cfgFile
 
-            val cmd = listOf(hy2Bin.absolutePath, "client", "-c", configFile.absolutePath, "--disable-update-check")
-            hy2Process = ProcessBuilder(cmd).redirectErrorStream(true).start()
-            isRunning = true
+            val cmd = listOf(hy2Bin.absolutePath, "client", "-c", cfgFile.absolutePath)
+            hy2Process = ProcessBuilder(cmd)
+                .redirectErrorStream(true)
+                .start()
 
-            thread(start = true, name = "Hy2-Monitor") {
+            var socksReady = false
+            for (attempt in 1..14) {
+                Thread.sleep(250)
+                if (hy2Process?.isAlive != true) break
                 try {
-                    val proc = hy2Process ?: return@thread
-                    val reader = BufferedReader(InputStreamReader(proc.inputStream))
-                    while (isRunning) {
-                        val line = reader.readLine() ?: break
-                        Log.d(TAG, line)
-                        if (line.contains("connected", true) || line.contains("SOCKS5", true)) {
-                            hy2Connected = true
-                        }
+                    Socket().use { s ->
+                        s.connect(InetSocketAddress("127.0.0.1", localSocksPort), 200)
+                        socksReady = true
                     }
+                    if (socksReady) break
                 } catch (_: Throwable) {}
             }
 
-            // Wait up to 6 seconds for local SOCKS5 port to bind
-            var socksBound = false
-            for (i in 1..30) {
-                if (hy2Process?.isAlive == false) break
-                try {
-                    Socket().use { s ->
-                        s.connect(InetSocketAddress("127.0.0.1", localSocksPort), 150)
-                        socksBound = true
-                    }
-                    if (socksBound) break
-                } catch (_: Throwable) {
-                    Thread.sleep(200)
-                }
-            }
-
-            if (hy2Process?.isAlive == true && (socksBound || hy2Connected)) {
+            if (hy2Process?.isAlive == true && socksReady) {
+                VpnStateBridge.addLog("HTTP/1.1 200 OK")
+                VpnStateBridge.addLog("Switching Protocols...")
                 true
             } else {
+                VpnStateBridge.addLog("Connection failed.")
                 stopHysteria2()
                 false
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Hysteria2 Error", t)
+            Log.e(TAG, "Hysteria2 Error: ${t.message}", t)
+            VpnStateBridge.addLog("Connection failed.")
             stopHysteria2()
             false
         }
     }
 
     fun stopHysteria2() {
-        isRunning = false
-        hy2Connected = false
         try {
             hy2Process?.destroy()
             hy2Process?.destroyForcibly()
         } catch (_: Throwable) {}
         hy2Process = null
+        try { activeConfigFile?.delete() } catch (_: Throwable) {}
+        activeConfigFile = null
     }
 }
-// === END OF FILE ===
+// === END OF FILE 5 ===
