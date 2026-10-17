@@ -70,7 +70,11 @@ class SmartVpnService : VpnService() {
         val notification = buildNotification(title, text)
         try {
             if (Build.VERSION.SDK_INT >= 34) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -117,7 +121,6 @@ class SmartVpnService : VpnService() {
                 val engineStarted = when {
                     proto == "SLOWDNS" -> {
                         val slowDnsPort = 7000
-                        // Allows SlowDNS to connect on ANY port specified in the profile
                         val targetDnsPort = if (profile.port in 1..65535) profile.port else 53
                         val dnsStarted = SlowDnsEngine.startSlowDns(
                             context = applicationContext,
@@ -313,7 +316,11 @@ class SmartVpnService : VpnService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Smart VPN Status", NotificationManager.IMPORTANCE_HIGH).apply {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Smart VPN Status",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
                 setSound(null, null)
                 enableVibration(false)
             }
@@ -340,4 +347,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE ===
+// === END OF FILE 9 ===
