@@ -6,7 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
-@Database(entities = [VpnProfile::class], version = 5, exportSchema = false)
+@Database(entities = [VpnProfile::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
 
@@ -17,10 +17,8 @@ abstract class AppDatabase : RoomDatabase() {
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 System.loadLibrary("sqlcipher")
-
                 val passphrase = "smartvpn-secure-key-2026".toByteArray()
                 val factory = SupportOpenHelperFactory(passphrase)
-
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
@@ -29,10 +27,10 @@ abstract class AppDatabase : RoomDatabase() {
                     .openHelperFactory(factory)
                     .fallbackToDestructiveMigration()
                     .build()
-
                 INSTANCE = instance
                 instance
             }
         }
     }
 }
+// === END OF FILE ===
