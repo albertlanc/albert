@@ -94,7 +94,7 @@ fun ConfigsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // SLOWDNS SPEED BOOST TOGGLE CARD (IN CONFIGS, DEFAULT OFF, AUTO-ON ONLY WHEN SLOWDNS CONNECTS)
+            // SLOWDNS SPEED BOOST TOGGLE CARD (DEFAULT OFF, AUTO-ON ONLY WHEN SLOWDNS CONNECTS)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -158,7 +158,7 @@ fun ConfigsScreen(
                         Text("No configurations saved", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Tap + to build SSH, SSH+WS+SNI+Payload, SlowDNS (Any Port), VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
+                            "Tap + to build SSH, SSH+WS+SNI+Payload, SlowDNS, VLESS, VMess, Trojan, WireGuard, or Hysteria2.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -403,14 +403,14 @@ fun ProtocolConfigDialog(
     val protocolModes = listOf(
         "SSH" to "SSH Direct (Port 22 / Any)",
         "SSH+WS+SNI+PAYLOAD" to "SSH + WS + SNI + Payload (Port 443 / 80)",
-        "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload/Proxy)",
-        "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443 / 8080)",
+        "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload)",
+        "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443)",
         "SLOWDNS" to "SlowDNS (DNSTT Tunnel)",
         "VLESS" to "VLESS (TLS 443 / noTLS 80)",
         "VMESS" to "VMess (TLS 443 / noTLS 80)",
         "TROJAN" to "Trojan (TLS 443 / noTLS 80)",
         "WIREGUARD" to "WireGuard (Native Tunnel)",
-        "HYSTERIA2" to "Hysteria2 (QUIC v2 Acceleration)"
+        "HYSTERIA2" to "Hysteria2 (QUIC Acceleration)"
     )
 
     var dropdownExpanded by remember { mutableStateOf(false) }
@@ -727,7 +727,7 @@ fun ProtocolConfigDialog(
                                     OutlinedTextField(
                                         value = sni,
                                         onValueChange = { sni = it },
-                                        label = { Text("SSL SNI / Bug Host (e.g. www.tescomobile.com)") },
+                                        label = { Text("SSL SNI / Bug Host") },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -845,19 +845,6 @@ fun ProtocolConfigDialog(
                                             modifier = Modifier.weight(1f)
                                         )
                                     }
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        payloadTags.forEach { tag ->
-                                            AssistChip(
-                                                onClick = { payload += tag },
-                                                label = { Text(tag) }
-                                            )
-                                        }
-                                    }
                                     OutlinedTextField(
                                         value = payload,
                                         onValueChange = { payload = it },
@@ -896,7 +883,7 @@ fun ProtocolConfigDialog(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Text(
-                                        text = "3. SlowDNS Settings",
+                                        text = "3. SlowDNS Settings (Works on Any Port)",
                                         style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -1510,4 +1497,4 @@ fun ImportAdvancedDialog(
         }
     )
 }
-// === END OF FILE 12 ===
+// === END OF FILE 13 ===
