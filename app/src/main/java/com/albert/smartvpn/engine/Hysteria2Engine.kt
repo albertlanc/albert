@@ -8,6 +8,8 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import kotlin.concurrent.thread
 
 object Hysteria2Engine {
@@ -29,52 +31,48 @@ object Hysteria2Engine {
         val sniHost = profile.sni.trim().ifBlank { serverHost }
 
         if (serverHost.isEmpty() || authPass.isEmpty()) {
-            VpnStateBridge.addLog("Hysteria2 Error: Server or Auth Password is empty!")
+            VpnStateBridge.addLog("[SmartVPN] Hysteria2 Error: Missing Server or Auth Password")
             return false
         }
 
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val hy2Bin = File(nativeDir, "libhysteria2.so")
-        if (!hy2Bin.exists()) {
-            VpnStateBridge.addLog("Hysteria2 Error: libhysteria2.so binary not found.")
+        if (!hy2Bin.exists() || hy2Bin.length() < 1024L) {
+            VpnStateBridge.addLog("[SmartVPN] Hysteria2 binary missing")
             return false
         }
         hy2Bin.setExecutable(true)
 
         return try {
             hy2Connected = false
-            VpnStateBridge.updateState("CONNECTING", "Starting Hysteria2 QUIC...")
-
             val resolvedIp = try {
                 InetAddress.getByName(serverHost).hostAddress ?: serverHost
             } catch (_: Throwable) {
                 serverHost
             }
-            VpnStateBridge.addLog("Starting Hysteria2 -> $resolvedIp:$serverPort (SNI: $sniHost)")
 
-            val obfsBlock = if (profile.hy2Obfs.equals("salamander", ignoreCase = true) &&
-                profile.hy2ObfsPassword.isNotBlank()
-            ) {
-                """
-                ,
-                "obfs": {
-                  "type": "salamander",
-                  "salamander": {
-                    "password": "${profile.hy2ObfsPassword}"
-                  }
-                }
-                """.trimIndent()
+            // Support Port Hopping (e.g. 20000-50000) if provided
+            val serverEndpoint = if (profile.hy2PortHopping.isNotBlank()) {
+                "$resolvedIp:$serverPort,${profile.hy2PortHopping.trim()}"
             } else {
-                ""
+                "$resolvedIp:$serverPort"
             }
+
+            val obfsBlock = if (profile.hy2ObfsPassword.isNotBlank()) {
+                ""","obfs":{"type":"salamander","salamander":{"password":"${profile.hy2ObfsPassword.trim()}"}}"""
+            } else ""
+
+            val pinBlock = if (profile.pinSha256.isNotBlank()) {
+                ""","pinSHA256":"${profile.pinSha256.trim()}""""
+            } else ""
 
             val configJson = """
             {
-              "server": "$resolvedIp:$serverPort",
+              "server": "$serverEndpoint",
               "auth": "$authPass",
               "tls": {
                 "sni": "$sniHost",
-                "insecure": true
+                "insecure": ${profile.allowInsecure}$pinBlock
               },
               "bandwidth": {
                 "up": "${profile.hy2UpMbps.coerceAtLeast(10)} mbps",
@@ -86,50 +84,50 @@ object Hysteria2Engine {
             }
             """.trimIndent()
 
-            val configFile = File(context.cacheDir, "hysteria2-client.json")
+            val configFile = File(context.cacheDir, "hy2-v2.json")
             configFile.writeText(configJson)
 
-            val cmd = listOf(hy2Bin.absolutePath, "client", "-c", configFile.absolutePath)
+            val cmd = listOf(hy2Bin.absolutePath, "client", "-c", configFile.absolutePath, "--disable-update-check")
             hy2Process = ProcessBuilder(cmd).redirectErrorStream(true).start()
             isRunning = true
 
-            thread(start = true, name = "Hy2-Logger") {
+            thread(start = true, name = "Hy2-Monitor") {
                 try {
                     val proc = hy2Process ?: return@thread
                     val reader = BufferedReader(InputStreamReader(proc.inputStream))
                     while (isRunning) {
                         val line = reader.readLine() ?: break
-                        val text = line.trim()
-                        if (text.isNotEmpty()) {
-                            Log.d(TAG, text)
-                            VpnStateBridge.addLog("[HY2] $text")
-                            if (text.contains("connected", ignoreCase = true) ||
-                                text.contains("SOCKS5", ignoreCase = true)
-                            ) {
-                                hy2Connected = true
-                            }
+                        Log.d(TAG, line)
+                        if (line.contains("connected", true) || line.contains("SOCKS5", true)) {
+                            hy2Connected = true
                         }
                     }
                 } catch (_: Throwable) {}
             }
 
+            // Wait up to 6 seconds for local SOCKS5 port to bind
+            var socksBound = false
             for (i in 1..30) {
                 if (hy2Process?.isAlive == false) break
-                if (hy2Connected) break
-                Thread.sleep(200)
+                try {
+                    Socket().use { s ->
+                        s.connect(InetSocketAddress("127.0.0.1", localSocksPort), 150)
+                        socksBound = true
+                    }
+                    if (socksBound) break
+                } catch (_: Throwable) {
+                    Thread.sleep(200)
+                }
             }
 
-            if (hy2Process?.isAlive == true) {
-                VpnStateBridge.addLog("Hysteria2 QUIC tunnel active on 127.0.0.1:$localSocksPort")
+            if (hy2Process?.isAlive == true && (socksBound || hy2Connected)) {
                 true
             } else {
-                VpnStateBridge.addLog("Hysteria2 failed to establish QUIC session.")
                 stopHysteria2()
                 false
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Hysteria2 Error", t)
-            VpnStateBridge.addLog("Hysteria2 Error: ${t.message}")
             stopHysteria2()
             false
         }
@@ -145,3 +143,4 @@ object Hysteria2Engine {
         hy2Process = null
     }
 }
+// === END OF FILE ===
