@@ -62,7 +62,7 @@ fun LogsScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF050A18))
+                    .background(Color(0xFF030714))
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
@@ -77,22 +77,23 @@ fun LogsScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF050A18))
+                    .background(Color(0xFF030714))
                     .padding(padding)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(logs) { logLine ->
                     val logColor = when {
-                        logLine.contains("Failed", ignoreCase = true) ||
-                            logLine.contains("Error", ignoreCase = true) ||
-                            logLine.contains("Rejected", ignoreCase = true) ||
-                            logLine.contains("Blocked", ignoreCase = true) -> Color(0xFFFF5252)
-                        logLine.contains("SUCCESS", ignoreCase = true) ||
-                            logLine.contains("CONNECTED!", ignoreCase = true) -> Color(0xFF00E676)
-                        logLine.contains("Connecting", ignoreCase = true) ||
-                            logLine.contains("Authenticating", ignoreCase = true) -> Color(0xFFFFAB00)
-                        else -> Color(0xFFB0C4DE)
+                        logLine.contains("Failed", true) ||
+                            logLine.contains("Error", true) ||
+                            logLine.contains("Rejected", true) ||
+                            logLine.contains("Blocked", true) -> Color(0xFFFF5252)
+                        logLine.contains("SUCCESS", true) ||
+                            logLine.contains("Connected", true) ||
+                            logLine.contains("Active", true) -> Color(0xFF00E676)
+                        logLine.contains("Connecting", true) ||
+                            logLine.contains("Authenticating", true) -> Color(0xFFFFAB00)
+                        else -> Color(0xFF9FB3C8)
                     }
                     Text(
                         text = logLine,
@@ -105,3 +106,4 @@ fun LogsScreen(
         }
     }
 }
+// === END OF FILE 14 ===
