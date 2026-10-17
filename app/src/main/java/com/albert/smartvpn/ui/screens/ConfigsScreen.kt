@@ -311,7 +311,10 @@ fun ConfigsScreen(
         ProtocolConfigDialog(
             initialProfile = editingProfile,
             onDismiss = { showConfigDialog = false },
-            onSave = { onSaveProfile(it); showConfigDialog = false }
+            onSave = { newProfile ->
+                onSaveProfile(newProfile)
+                showConfigDialog = false
+            }
         )
     }
 
@@ -319,33 +322,52 @@ fun ConfigsScreen(
         val target = unlockPromptProfile!!
         var enteredPass by remember { mutableStateOf("") }
         var errorText by remember { mutableStateOf("") }
+
         AlertDialog(
             onDismissRequest = { unlockPromptProfile = null },
+            icon = { Icon(Icons.Default.Lock, contentDescription = null) },
             title = { Text("Hardware-Locked Config") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Enter creator passphrase to unlock:")
+                    Text("This configuration is cryptographically locked. Enter the creator passphrase to unlock:")
                     OutlinedTextField(
                         value = enteredPass,
-                        onValueChange = { enteredPass = it; errorText = "" },
-                        label = { Text("Passphrase") },
+                        onValueChange = {
+                            enteredPass = it
+                            errorText = ""
+                        },
+                        label = { Text("Creator Passphrase") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    if (errorText.isNotEmpty()) Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    if (errorText.isNotEmpty()) {
+                        Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     if (target.lockPassphrase.isNotEmpty() && enteredPass == target.lockPassphrase) {
                         unlockPromptProfile = null
-                        if (unlockActionType == "SHARE") sharingProfile = target
-                        else { editingProfile = target; showConfigDialog = true }
-                    } else errorText = "Access Denied: Invalid passphrase."
-                }) { Text("Unlock") }
+                        if (unlockActionType == "SHARE") {
+                            sharingProfile = target
+                        } else {
+                            editingProfile = target
+                            showConfigDialog = true
+                        }
+                    } else {
+                        errorText = "Access Denied: Locked configs cannot be viewed or exported without the creator passphrase."
+                    }
+                }) {
+                    Text("Unlock")
+                }
             },
-            dismissButton = { TextButton(onClick = { unlockPromptProfile = null }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(onClick = { unlockPromptProfile = null }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 
@@ -353,14 +375,20 @@ fun ConfigsScreen(
         ShareAndLockDialog(
             profile = sharingProfile!!,
             onDismiss = { sharingProfile = null },
-            onUpdateLockState = { onSaveProfile(it); sharingProfile = it }
+            onUpdateLockState = { updated ->
+                onSaveProfile(updated)
+                sharingProfile = updated
+            }
         )
     }
 
     if (showImportModal) {
         ImportAdvancedDialog(
             onDismiss = { showImportModal = false },
-            onImportSuccess = { onSaveProfile(it); showImportModal = false }
+            onImportSuccess = { importedProfile ->
+                onSaveProfile(importedProfile)
+                showImportModal = false
+            }
         )
     }
 }
@@ -377,7 +405,7 @@ fun ProtocolConfigDialog(
         "SSH+WS+SNI+PAYLOAD" to "SSH + WS + SNI + Payload (Port 443 / 80)",
         "SSH+SSL" to "Pure SSH + SSL / TLS (Port 443, No Payload/Proxy)",
         "SSH+PAYLOAD" to "SSH + Proxy + Payload (Port 80 / 443 / 8080)",
-        "SLOWDNS" to "SlowDNS (DNSTT Tunnel - Any Port)",
+        "SLOWDNS" to "SlowDNS (DNSTT Tunnel)",
         "VLESS" to "VLESS (TLS 443 / noTLS 80)",
         "VMESS" to "VMess (TLS 443 / noTLS 80)",
         "TROJAN" to "Trojan (TLS 443 / noTLS 80)",
@@ -392,6 +420,7 @@ fun ProtocolConfigDialog(
     var name by remember { mutableStateOf(initialProfile?.name ?: "") }
     var server by remember { mutableStateOf(initialProfile?.server ?: "") }
     var port by remember { mutableStateOf((initialProfile?.port ?: 22).toString()) }
+
     var sshUser by remember { mutableStateOf(initialProfile?.sshUser ?: "") }
     var sshPass by remember { mutableStateOf(initialProfile?.sshPass ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -430,12 +459,24 @@ fun ProtocolConfigDialog(
 
     val payloadTags = listOf("[host]", "[sni]", "[port]", "[host_port]", "[crlf]", "[ua]", "[split]")
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 TopAppBar(
-                    title = { Text(if (initialProfile == null) "Configure Profile" else "Edit Profile") },
-                    navigationIcon = { IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null) } },
+                    title = {
+                        Text(if (initialProfile == null) "Configure Profile" else "Edit Profile")
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    },
                     actions = {
                         Button(
                             onClick = {
@@ -456,6 +497,7 @@ fun ProtocolConfigDialog(
                                     "VLESS", "VMESS", "TROJAN" -> if (resolvedPort == 80 && xSecurity != "tls") "none" else xSecurity
                                     else -> "none"
                                 }
+
                                 onSave(
                                     VpnProfile(
                                         id = initialProfile?.id ?: 0,
@@ -499,12 +541,17 @@ fun ProtocolConfigDialog(
                                 )
                             },
                             modifier = Modifier.padding(end = 8.dp)
-                        ) { Text("Save") }
+                        ) {
+                            Text("Save")
+                        }
                     }
                 )
 
                 Column(
-                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Card(
@@ -512,18 +559,36 @@ fun ProtocolConfigDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("1. Select Tunnel Protocol", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                            ExposedDropdownMenuBox(expanded = dropdownExpanded, onExpandedChange = { dropdownExpanded = !dropdownExpanded }) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "1. Select Tunnel Protocol",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            ExposedDropdownMenuBox(
+                                expanded = dropdownExpanded,
+                                onExpandedChange = { dropdownExpanded = !dropdownExpanded }
+                            ) {
                                 OutlinedTextField(
                                     value = selectedProtocolLabel,
                                     onValueChange = {},
                                     readOnly = true,
                                     label = { Text("Connection Mode / Protocol") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
-                                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded)
+                                    },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
                                 )
-                                ExposedDropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
+                                ExposedDropdownMenu(
+                                    expanded = dropdownExpanded,
+                                    onDismissRequest = { dropdownExpanded = false }
+                                ) {
                                     protocolModes.forEach { (code, label) ->
                                         DropdownMenuItem(
                                             text = { Text(label) },
@@ -542,22 +607,142 @@ fun ProtocolConfigDialog(
                                     }
                                 }
                             }
-                            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Profile Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                label = { Text("Profile Name") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
 
                     when (selectedProtocol) {
                         "SSH" -> {
-                            SshServerAndAuthCard("2. SSH Direct Server & Credentials", server, { server = it }, port, { port = it }, sshUser, { sshUser = it }, sshPass, { sshPass = it }, passwordVisible) { passwordVisible = !passwordVisible }
+                            SshServerAndAuthCard(
+                                title = "2. SSH Direct Server & Credentials",
+                                server = server,
+                                onServerChange = { server = it },
+                                port = port,
+                                onPortChange = { port = it },
+                                sshUser = sshUser,
+                                onUserChange = { sshUser = it },
+                                sshPass = sshPass,
+                                onPassChange = { sshPass = it },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisible = { passwordVisible = !passwordVisible }
+                            )
                         }
+
                         "SSH+WS+SNI+PAYLOAD" -> {
-                            SshServerAndAuthCard("2. SSH Server & Account Credentials", server, { server = it }, port, { port = it }, sshUser, { sshUser = it }, sshPass, { sshPass = it }, passwordVisible) { passwordVisible = !passwordVisible }
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("3. SNI (Bug Host) & WebSocket Payload", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SSL SNI / Bug Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        payloadTags.forEach { tag -> AssistChip(onClick = { payload += tag }, label = { Text(tag) }) }
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "2. SSH Server & Account Credentials",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = port == "443",
+                                            onClick = { port = "443" },
+                                            label = { Text("Port 443 (TLS + WS)") }
+                                        )
+                                        FilterChip(
+                                            selected = port == "80",
+                                            onClick = { port = "80" },
+                                            label = { Text("Port 80 (HTTP WS)") }
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = server,
+                                            onValueChange = { server = it },
+                                            label = { Text("SSH Server Host / IP") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
+                                        OutlinedTextField(
+                                            value = port,
+                                            onValueChange = { port = it },
+                                            label = { Text("Port") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    OutlinedTextField(
+                                        value = sshUser,
+                                        onValueChange = { sshUser = it },
+                                        label = { Text("SSH Username") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = sshPass,
+                                        onValueChange = { sshPass = it },
+                                        label = { Text("SSH Password") },
+                                        singleLine = true,
+                                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                        trailingIcon = {
+                                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                                Icon(
+                                                    imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                    contentDescription = "Show/Hide Password"
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "3. SNI (Bug Host) & WebSocket Payload",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    OutlinedTextField(
+                                        value = sni,
+                                        onValueChange = { sni = it },
+                                        label = { Text("SSL SNI / Bug Host (e.g. www.tescomobile.com)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        payloadTags.forEach { tag ->
+                                            AssistChip(
+                                                onClick = { payload += tag },
+                                                label = { Text(tag) }
+                                            )
+                                        }
                                     }
                                     OutlinedTextField(
                                         value = payload,
@@ -571,84 +756,372 @@ fun ProtocolConfigDialog(
                                 }
                             }
                         }
+
                         "SSH+SSL" -> {
-                            SshServerAndAuthCard("2. Pure SSH + SSL Server & Credentials", server, { server = it }, port, { port = it }, sshUser, { sshUser = it }, sshPass, { sshPass = it }, passwordVisible) { passwordVisible = !passwordVisible }
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("3. SSL / TLS SNI (Spoof Host)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SSL SNI / Bug Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            SshServerAndAuthCard(
+                                title = "2. Pure SSH + SSL Server & Credentials",
+                                server = server,
+                                onServerChange = { server = it },
+                                port = port,
+                                onPortChange = { port = it },
+                                sshUser = sshUser,
+                                onUserChange = { sshUser = it },
+                                sshPass = sshPass,
+                                onPassChange = { sshPass = it },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisible = { passwordVisible = !passwordVisible }
+                            )
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "3. SSL / TLS SNI (Spoof Host)",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    OutlinedTextField(
+                                        value = sni,
+                                        onValueChange = { sni = it },
+                                        label = { Text("SSL SNI / Bug Host") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
+
                         "SSH+PAYLOAD" -> {
-                            SshServerAndAuthCard("2. SSH Server & Credentials", server, { server = it }, port, { port = it }, sshUser, { sshUser = it }, sshPass, { sshPass = it }, passwordVisible) { passwordVisible = !passwordVisible }
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("3. Remote Proxy & HTTP Payload", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text("Remote Proxy IP / Host") }, singleLine = true, modifier = Modifier.weight(2f))
-                                        OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it }, label = { Text("Proxy Port") }, singleLine = true, modifier = Modifier.weight(1f))
+                            SshServerAndAuthCard(
+                                title = "2. SSH Server & Credentials",
+                                server = server,
+                                onServerChange = { server = it },
+                                port = port,
+                                onPortChange = { port = it },
+                                sshUser = sshUser,
+                                onUserChange = { sshUser = it },
+                                sshPass = sshPass,
+                                onPassChange = { sshPass = it },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisible = { passwordVisible = !passwordVisible }
+                            )
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "3. Remote Proxy & HTTP Payload",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = proxyHost,
+                                            onValueChange = { proxyHost = it },
+                                            label = { Text("Remote Proxy IP / Host") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
+                                        OutlinedTextField(
+                                            value = proxyPort,
+                                            onValueChange = { proxyPort = it },
+                                            label = { Text("Proxy Port") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    OutlinedTextField(value = payload, onValueChange = { payload = it }, label = { Text("HTTP Custom Payload") }, minLines = 4, modifier = Modifier.fillMaxWidth())
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        payloadTags.forEach { tag ->
+                                            AssistChip(
+                                                onClick = { payload += tag },
+                                                label = { Text(tag) }
+                                            )
+                                        }
+                                    }
+                                    OutlinedTextField(
+                                        value = payload,
+                                        onValueChange = { payload = it },
+                                        label = { Text("HTTP Custom Payload") },
+                                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
+                                        minLines = 4,
+                                        maxLines = 6,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
+
                         "SLOWDNS" -> {
-                            SshServerAndAuthCard("2. Server Host, Port & SSH Credentials", server, { server = it }, port, { port = it }, sshUser, { sshUser = it }, sshPass, { sshPass = it }, passwordVisible) { passwordVisible = !passwordVisible }
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("3. SlowDNS Settings", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    OutlinedTextField(value = slowDnsServerIp, onValueChange = { slowDnsServerIp = it }, label = { Text("SlowDNS Server IP / DNS (e.g. 8.8.8.8)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = slowDnsDomain, onValueChange = { slowDnsDomain = it }, label = { Text("NS Domain (Name Server)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = slowDnsPubKey, onValueChange = { slowDnsPubKey = it }, label = { Text("SlowDNS Public Key") }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
+                            SshServerAndAuthCard(
+                                title = "2. Server Host, Port & SSH Credentials",
+                                server = server,
+                                onServerChange = { server = it },
+                                port = port,
+                                onPortChange = { port = it },
+                                sshUser = sshUser,
+                                onUserChange = { sshUser = it },
+                                sshPass = sshPass,
+                                onPassChange = { sshPass = it },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisible = { passwordVisible = !passwordVisible }
+                            )
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "3. SlowDNS Settings",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    OutlinedTextField(
+                                        value = slowDnsServerIp,
+                                        onValueChange = { slowDnsServerIp = it },
+                                        label = { Text("SlowDNS Server IP / DNS (e.g. 8.8.8.8)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = slowDnsDomain,
+                                        onValueChange = { slowDnsDomain = it },
+                                        label = { Text("NS Domain (Name Server)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = slowDnsPubKey,
+                                        onValueChange = { slowDnsPubKey = it },
+                                        label = { Text("SlowDNS Public Key") },
+                                        minLines = 2,
+                                        maxLines = 4,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
+
                         "WIREGUARD" -> {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("2. WireGuard Endpoint & Keys", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Endpoint Host / IP") }, singleLine = true, modifier = Modifier.weight(2f))
-                                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("UDP Port") }, singleLine = true, modifier = Modifier.weight(1f))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "2. WireGuard Endpoint & Keys",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = server,
+                                            onValueChange = { server = it },
+                                            label = { Text("Endpoint Host / IP") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
+                                        OutlinedTextField(
+                                            value = port,
+                                            onValueChange = { port = it },
+                                            label = { Text("UDP Port") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    OutlinedTextField(value = wgPrivateKey, onValueChange = { wgPrivateKey = it }, label = { Text("Interface Private Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = wgPublicKey, onValueChange = { wgPublicKey = it }, label = { Text("Peer Public Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = wgPresharedKey, onValueChange = { wgPresharedKey = it }, label = { Text("Preshared Key (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = wgAddress, onValueChange = { wgAddress = it }, label = { Text("Client IP (10.0.0.2/32)") }, singleLine = true, modifier = Modifier.weight(2f))
-                                        OutlinedTextField(value = wgMtu, onValueChange = { wgMtu = it }, label = { Text("MTU") }, singleLine = true, modifier = Modifier.weight(1f))
+                                    OutlinedTextField(
+                                        value = wgPrivateKey,
+                                        onValueChange = { wgPrivateKey = it },
+                                        label = { Text("Interface Private Key") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = wgPublicKey,
+                                        onValueChange = { wgPublicKey = it },
+                                        label = { Text("Peer Public Key") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = wgPresharedKey,
+                                        onValueChange = { wgPresharedKey = it },
+                                        label = { Text("Preshared Key (Optional)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = wgAddress,
+                                            onValueChange = { wgAddress = it },
+                                            label = { Text("Client IP (10.0.0.2/32)") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
+                                        OutlinedTextField(
+                                            value = wgMtu,
+                                            onValueChange = { wgMtu = it },
+                                            label = { Text("MTU") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
                                 }
                             }
                         }
+
                         "HYSTERIA2" -> {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("2. Hysteria2 QUIC Server & Auth", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server Host / IP") }, singleLine = true, modifier = Modifier.weight(2f))
-                                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("UDP Port") }, singleLine = true, modifier = Modifier.weight(1f))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "2. Hysteria2 QUIC Server & Auth",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = server,
+                                            onValueChange = { server = it },
+                                            label = { Text("Server Host / IP") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
+                                        OutlinedTextField(
+                                            value = port,
+                                            onValueChange = { port = it },
+                                            label = { Text("UDP Port") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    OutlinedTextField(value = hy2Password, onValueChange = { hy2Password = it }, label = { Text("Auth Password / Token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("TLS SNI / Bug Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = hy2Obfs, onValueChange = { hy2Obfs = it }, label = { Text("Obfs (salamander)") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(value = hy2ObfsPassword, onValueChange = { hy2ObfsPassword = it }, label = { Text("Obfs Password") }, singleLine = true, modifier = Modifier.weight(1f))
+                                    OutlinedTextField(
+                                        value = hy2Password,
+                                        onValueChange = { hy2Password = it },
+                                        label = { Text("Auth Password / Token") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = sni,
+                                        onValueChange = { sni = it },
+                                        label = { Text("TLS SNI / Bug Host") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = hy2Obfs,
+                                            onValueChange = { hy2Obfs = it },
+                                            label = { Text("Obfs (salamander)") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        OutlinedTextField(
+                                            value = hy2ObfsPassword,
+                                            onValueChange = { hy2ObfsPassword = it },
+                                            label = { Text("Obfs Password") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
                                 }
                             }
                         }
+
                         else -> {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("2. $selectedProtocol Server & Credentials", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        FilterChip(selected = xSecurity == "tls" && port == "443", onClick = { port = "443"; xSecurity = "tls" }, label = { Text("Port 443 (TLS)") })
-                                        FilterChip(selected = xSecurity == "none" || port == "80", onClick = { port = "80"; xSecurity = "none" }, label = { Text("Port 80 (noTLS)") })
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "2. $selectedProtocol Server & Credentials",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = xSecurity == "tls" && port == "443",
+                                            onClick = {
+                                                port = "443"
+                                                xSecurity = "tls"
+                                            },
+                                            label = { Text("Port 443 (TLS)") }
+                                        )
+                                        FilterChip(
+                                            selected = xSecurity == "none" || port == "80",
+                                            onClick = {
+                                                port = "80"
+                                                xSecurity = "none"
+                                            },
+                                            label = { Text("Port 80 (noTLS)") }
+                                        )
                                     }
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server Host / Domain") }, singleLine = true, modifier = Modifier.weight(2f))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = server,
+                                            onValueChange = { server = it },
+                                            label = { Text("Server Host / Domain") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(2f)
+                                        )
                                         OutlinedTextField(
                                             value = port,
                                             onValueChange = {
@@ -661,9 +1134,27 @@ fun ProtocolConfigDialog(
                                             modifier = Modifier.weight(1f)
                                         )
                                     }
-                                    OutlinedTextField(value = uuid, onValueChange = { uuid = it }, label = { Text(if (selectedProtocol == "TROJAN") "Trojan Password" else "UUID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI / Bug Host Header") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(value = wsPath, onValueChange = { wsPath = it }, label = { Text("WebSocket / gRPC Path (/ws)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(
+                                        value = uuid,
+                                        onValueChange = { uuid = it },
+                                        label = { Text(if (selectedProtocol == "TROJAN") "Trojan Password" else "UUID") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = sni,
+                                        onValueChange = { sni = it },
+                                        label = { Text("SNI / Bug Host Header") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = wsPath,
+                                        onValueChange = { wsPath = it },
+                                        label = { Text("WebSocket / gRPC Path (/ws)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
@@ -689,14 +1180,42 @@ private fun SshServerAndAuthCard(
     passwordVisible: Boolean,
     onTogglePasswordVisible: () -> Unit
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = server, onValueChange = onServerChange, label = { Text("Server Host / IP") }, singleLine = true, modifier = Modifier.weight(2f))
-                OutlinedTextField(value = port, onValueChange = onPortChange, label = { Text("Port") }, singleLine = true, modifier = Modifier.weight(1f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = server,
+                    onValueChange = onServerChange,
+                    label = { Text("Server Host / IP") },
+                    singleLine = true,
+                    modifier = Modifier.weight(2f)
+                )
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = onPortChange,
+                    label = { Text("Port") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            OutlinedTextField(value = sshUser, onValueChange = onUserChange, label = { Text("SSH Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = sshUser,
+                onValueChange = onUserChange,
+                label = { Text("SSH Username") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             OutlinedTextField(
                 value = sshPass,
                 onValueChange = onPassChange,
@@ -705,7 +1224,10 @@ private fun SshServerAndAuthCard(
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = onTogglePasswordVisible) {
-                        Icon(if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "Show/Hide Password"
+                        )
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -739,9 +1261,12 @@ fun ShareAndLockDialog(
         onDismissRequest = onDismiss,
         title = { Text("HWID Vault Lock: ${profile.name}") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
-                    "AES-256-GCM Hardware-Bound Encryption: Only the device matching the Hardware ID below can decrypt this config.",
+                    text = "AES-256-GCM Hardware-Bound Encryption: Only the device matching the Hardware ID below can decrypt this config.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -749,14 +1274,23 @@ fun ShareAndLockDialog(
                     value = targetDeviceId,
                     onValueChange = {
                         targetDeviceId = it.trim().uppercase()
-                        onUpdateLockState(profile.copy(isLocked = true, lockPassphrase = passphrase, lockedDeviceId = targetDeviceId))
+                        onUpdateLockState(
+                            profile.copy(
+                                isLocked = true,
+                                lockPassphrase = passphrase,
+                                lockedDeviceId = targetDeviceId
+                            )
+                        )
                     },
                     label = { Text("Recipient Hardware ID (SVPN-XXXX)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(onClick = { targetDeviceId = myDeviceId }, label = { Text("Lock to My ID") })
+                    AssistChip(
+                        onClick = { targetDeviceId = myDeviceId },
+                        label = { Text("Lock to My ID") }
+                    )
                     AssistChip(
                         onClick = {
                             clipboardManager.getText()?.text?.trim()?.let { clip ->
@@ -770,7 +1304,13 @@ fun ShareAndLockDialog(
                     value = passphrase,
                     onValueChange = {
                         passphrase = it
-                        onUpdateLockState(profile.copy(isLocked = true, lockPassphrase = it, lockedDeviceId = targetDeviceId))
+                        onUpdateLockState(
+                            profile.copy(
+                                isLocked = true,
+                                lockPassphrase = it,
+                                lockedDeviceId = targetDeviceId
+                            )
+                        )
                     },
                     label = { Text("Creator Passphrase") },
                     singleLine = true,
@@ -792,47 +1332,70 @@ fun ShareAndLockDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.InsertDriveFile, null)
+                    Icon(Icons.Default.InsertDriveFile, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Share HWID-Locked File (.svpn)")
                 }
                 OutlinedButton(
-                    onClick = { clipboardManager.setText(AnnotatedString(encryptedUri)); onDismiss() },
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(encryptedUri))
+                        onDismiss()
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Key, null)
+                    Icon(Icons.Default.Key, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Copy HWID + Passphrase Link")
                 }
                 OutlinedButton(
-                    onClick = { clipboardManager.setText(AnnotatedString(cloudToken)); onDismiss() },
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(cloudToken))
+                        onDismiss()
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.CloudUpload, null)
+                    Icon(Icons.Default.CloudUpload, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Copy Cloud Config Token")
                 }
-                OutlinedButton(onClick = { showQrCode = !showQrCode }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.QrCode, null)
+                OutlinedButton(
+                    onClick = { showQrCode = !showQrCode },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.QrCode, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(if (showQrCode) "Hide QR Code" else "Generate HWID-Locked QR Code")
                 }
                 if (showQrCode) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         ConfigQrMatrixView(data = encryptedUri)
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        }
     )
 }
 
 @Composable
 fun ConfigQrMatrixView(data: String) {
-    val digest = remember(data) { MessageDigest.getInstance("SHA-256").digest(data.toByteArray()) }
+    val digest = remember(data) {
+        MessageDigest.getInstance("SHA-256").digest(data.toByteArray())
+    }
     Box(
-        modifier = Modifier.size(180.dp).background(Color.White, RoundedCornerShape(8.dp)).padding(12.dp),
+        modifier = Modifier
+            .size(180.dp)
+            .background(Color.White, RoundedCornerShape(8.dp))
+            .padding(12.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -846,7 +1409,9 @@ fun ConfigQrMatrixView(data: String) {
                     }
                 }
             }
-            drawFinder(0, 0); drawFinder(0, gridSize - 7); drawFinder(gridSize - 7, 0)
+            drawFinder(0, 0)
+            drawFinder(0, gridSize - 7)
+            drawFinder(gridSize - 7, 0)
             var bitIdx = 0
             for (r in 0 until gridSize) for (c in 0 until gridSize) {
                 if (!isFinder(r, c)) {
@@ -870,7 +1435,9 @@ fun ImportAdvancedDialog(
     val clipboardManager = LocalClipboardManager.current
     val myDeviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
 
-    var configInput by remember { mutableStateOf(clipboardManager.getText()?.text ?: "") }
+    var configInput by remember {
+        mutableStateOf(clipboardManager.getText()?.text ?: "")
+    }
     var passphrase by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
 
@@ -879,10 +1446,41 @@ fun ImportAdvancedDialog(
         title = { Text("Import HWID / Cloud Config") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Your Hardware ID: $myDeviceId", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                OutlinedTextField(value = configInput, onValueChange = { configInput = it; errorMsg = "" }, label = { Text("Encrypted Link / SVPN-CLOUD / .svpn") }, minLines = 3, maxLines = 5, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = passphrase, onValueChange = { passphrase = it; errorMsg = "" }, label = { Text("Passphrase (If Locked)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                if (errorMsg.isNotEmpty()) Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = "Your Hardware ID: $myDeviceId",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+                OutlinedTextField(
+                    value = configInput,
+                    onValueChange = {
+                        configInput = it
+                        errorMsg = ""
+                    },
+                    label = { Text("Encrypted Link / SVPN-CLOUD / .svpn") },
+                    minLines = 3,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = {
+                        passphrase = it
+                        errorMsg = ""
+                    },
+                    label = { Text("Passphrase (If Locked)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (errorMsg.isNotEmpty()) {
+                    Text(
+                        text = errorMsg,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         },
         confirmButton = {
@@ -890,7 +1488,9 @@ fun ImportAdvancedDialog(
                 val parsed = ConfigCryptoHelper.importProfileUri(configInput, passphrase, myDeviceId)
                     ?: VpnConfigParser.parseUri(configInput)
                 if (parsed != null) {
-                    if (parsed.lockedDeviceId.isNotBlank() && !parsed.lockedDeviceId.trim().equals(myDeviceId, true)) {
+                    if (parsed.lockedDeviceId.isNotBlank() &&
+                        !parsed.lockedDeviceId.trim().equals(myDeviceId, true)
+                    ) {
                         errorMsg = "HWID Mismatch: Locked to another device."
                     } else {
                         VpnStateBridge.addLog("Configuration imported: ${parsed.name}")
@@ -899,9 +1499,15 @@ fun ImportAdvancedDialog(
                 } else {
                     errorMsg = "Decryption Rejected! Hardware ID ($myDeviceId) or Passphrase does not match."
                 }
-            }) { Text("Unlock & Import") }
+            }) {
+                Text("Unlock & Import")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
     )
 }
-// === END OF FILE ===
+// === END OF FILE 12 ===
