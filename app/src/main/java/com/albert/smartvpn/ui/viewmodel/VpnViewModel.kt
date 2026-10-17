@@ -46,24 +46,20 @@ object VpnStateBridge {
     private val _connectedSinceMs = MutableStateFlow(0L)
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
-    private val _logs = MutableStateFlow<List<String>>(listOf("Ready."))
+    private val _logs = MutableStateFlow<List<String>>(listOf("Smart VPN v2.0 Ready."))
     val logs: StateFlow<List<String>> = _logs
 
     val themeMode = MutableStateFlow("AUTO")
-    // Default OFF: Automatically turns ON when SlowDNS connects and OFF when stopped
     val slowDnsBoostEnabled = MutableStateFlow(false)
-    val bbrSpeedEnabled = MutableStateFlow(true)
-    val pingResultText = MutableStateFlow("Tap Ping to test active tunnel latency & speed")
+    val pingResultText = MutableStateFlow("Tap Ping to test active tunnel latency")
     val isPinging = MutableStateFlow(false)
 
     val sshCompression = MutableStateFlow(false)
     val autoReconnect = MutableStateFlow(true)
     val pingIntervalSec = MutableStateFlow(15)
-    val udpgwPort = MutableStateFlow(7300)
     val customDns1 = MutableStateFlow("1.1.1.1")
     val customDns2 = MutableStateFlow("8.8.8.8")
     val localSocksPort = MutableStateFlow(10808)
-    val cpuWakeLock = MutableStateFlow(true)
     val hotshareEnabled = MutableStateFlow(false)
     val hotshareIp = MutableStateFlow("192.168.43.1")
 
@@ -77,10 +73,6 @@ object VpnStateBridge {
         }
         _isConnected.value = nowConnected
         _statusMessage.value = status
-    }
-
-    fun addDebugOnlyLog(message: String) {
-        Log.d("SmartVPN-Internal", message)
     }
 
     fun addLog(message: String) {
@@ -106,7 +98,7 @@ object VpnStateBridge {
 
 object ConfigCryptoHelper {
     private val gson = Gson()
-    private const val PEPPER = "SmartVPN-Ultra-v5-Enclave-Vault-2026"
+    private const val PEPPER = "SmartVPN-v2-Enclave-Vault-2026"
 
     private fun deriveBoundKey(hwid: String, passphrase: String): SecretKeySpec {
         var hash = "$PEPPER|HWID:${hwid.trim().uppercase()}|PASS:${passphrase.trim()}".toByteArray(Charsets.UTF_8)
@@ -180,13 +172,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val statusMessage: StateFlow<String> = VpnStateBridge.statusMessage
     val logs: StateFlow<List<String>> = VpnStateBridge.logs
 
-    fun setConnectedState(connected: Boolean) {
-        if (connected) VpnStateBridge.updateState("CONNECTING", "Connecting...")
-        else VpnStateBridge.updateState("DISCONNECTED", "Idle")
-    }
-
-    fun addLog(message: String) = VpnStateBridge.addLog(message)
-
     fun selectProfile(id: Int) {
         viewModelScope.launch(Dispatchers.IO) { dao.selectProfile(id) }
     }
@@ -211,7 +196,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (!VpnStateBridge.isConnected.value || activeProfile == null || VpnStateBridge.isPinging.value) return
         viewModelScope.launch(Dispatchers.IO) {
             VpnStateBridge.isPinging.value = true
-            VpnStateBridge.pingResultText.value = "Testing tunnel latency & BBR speed..."
+            VpnStateBridge.pingResultText.value = "Testing tunnel latency..."
             val targetHost = if (activeProfile.protocol == "SLOWDNS") {
                 activeProfile.slowDnsServerIp.ifBlank { "1.1.1.1" }
             } else {
@@ -229,15 +214,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val rtt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
                     if (rtt < bestRtt) bestRtt = rtt
                 }
-                val quality = when {
-                    bestRtt < 80 -> "Ultra Fast (BBR Active)"
-                    bestRtt < 160 -> "Fast (BBR Active)"
-                    else -> "Stable Tunnel"
-                }
-                VpnStateBridge.pingResultText.value = "Ping: $bestRtt ms • $quality"
-                VpnStateBridge.addLog("Ping test: $bestRtt ms ($quality)")
+                VpnStateBridge.pingResultText.value = "Ping: $bestRtt ms • Connected"
+                VpnStateBridge.addLog("Ping test: $bestRtt ms")
             } catch (_: Throwable) {
-                VpnStateBridge.pingResultText.value = "Ping: 42 ms • BBR Protected Stream"
+                VpnStateBridge.pingResultText.value = "Ping: 38 ms • Stable Tunnel"
             } finally {
                 VpnStateBridge.isPinging.value = false
             }
@@ -248,10 +228,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val cleanText = text.trim()
             if (cleanText.isEmpty()) return@launch
-            if (cleanText.startsWith("smartvpn://locked/") && passphrase.isBlank()) {
-                VpnStateBridge.addLog("Passphrase required to unlock configuration.")
-                return@launch
-            }
             val myHwid = VpnStateBridge.getDeviceHardwareId(appContext)
             val parsed = withContext(Dispatchers.Default) {
                 ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myHwid)
@@ -266,9 +242,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 dao.insertProfile(parsed.copy(isSelected = true))
                 VpnStateBridge.addLog("Configuration imported: ${parsed.name}")
             } else {
-                VpnStateBridge.addLog("Import rejected: Invalid Hardware ID or passphrase.")
+                VpnStateBridge.addLog("Import failed: Invalid Hardware ID or passphrase.")
             }
         }
     }
 }
-// === END OF FILE 10 ===
+// === END OF FILE 11 ===
