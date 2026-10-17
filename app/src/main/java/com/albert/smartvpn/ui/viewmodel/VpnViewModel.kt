@@ -121,7 +121,13 @@ object ConfigCryptoHelper {
 
     fun exportProfileUri(profile: VpnProfile, lockConfig: Boolean, passphrase: String, targetDeviceId: String): String {
         val cleanHwid = targetDeviceId.trim().uppercase()
-        val copy = profile.copy(id = 0, isSelected = true, isLocked = true, lockPassphrase = passphrase.trim(), lockedDeviceId = cleanHwid)
+        val copy = profile.copy(
+            id = 0,
+            isSelected = true,
+            isLocked = true,
+            lockPassphrase = passphrase.trim(),
+            lockedDeviceId = cleanHwid
+        )
         val jsonBytes = gson.toJson(copy).toByteArray(Charsets.UTF_8)
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -265,4 +271,4 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-// === END OF FILE ===
+// === END OF FILE 10 ===
