@@ -79,7 +79,7 @@ object SlowDnsEngine {
             rawDnsHost
         }
 
-        // Automatically turn ON SlowDNS Boost when a SlowDNS file connects
+        // Automatically turn ON SlowDNS Boost when a SlowDNS profile connects
         VpnStateBridge.slowDnsBoostEnabled.value = true
 
         return try {
@@ -231,4 +231,4 @@ object SlowDnsEngine {
         }
     }
 }
-// === END OF FILE ===
+// === END OF FILE 6 ===
