@@ -241,7 +241,7 @@ object SshEngine {
                     setPerformancePreferences(0, 1, 2)
                     tcpNoDelay = true
                     keepAlive = true
-                    trafficClass = 0x18 // BBR Low-Delay + High-Throughput DSCP
+                    trafficClass = 0x18
                     sendBufferSize = 524288
                     receiveBufferSize = 524288
                     connect(InetSocketAddress(tcpHost, tcpPort), 15000)
@@ -315,7 +315,6 @@ object SshEngine {
                 }
 
                 val activeSocket: Socket = if (shouldUseTls) {
-                    // Force HTTP/1.1 ALPN immediately when payload is used so WS upgrades never lag
                     openSslSocket(tcpHost, tcpPort, sniHost, payloadTemplate.isNotBlank())
                 } else {
                     Socket().apply {
@@ -515,7 +514,6 @@ object SshEngine {
             val sshIn = bridgeSocket.getInputStream()
             val sshOut = bridgeSocket.getOutputStream()
 
-            // Zero-syscall 128 KB BBR Stream Pipeline (no ins.available() bottleneck)
             val upFuture = ioThreadPool.submit {
                 try {
                     val buf = ByteArray(131072)
@@ -630,4 +628,4 @@ object SshEngine {
         }
     }
 }
-// === END OF FILE ===
+// === END OF FILE 7 ===
