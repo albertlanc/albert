@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -16,12 +18,12 @@ import kotlin.concurrent.thread
 
 object SlowDnsEngine {
     private const val TAG = "SlowDnsEngine"
-    private const val BOOST_INSTANCES = 15
+    private const val BOOST_INSTANCES = 4
     private const val BASE_WORKER_PORT = 7001
 
     private val workerProcesses = CopyOnWriteArrayList<Process>()
     private var balancerServer: ServerSocket? = null
-    private val balancerPool = Executors.newCachedThreadPool()
+    private val balancerPool = Executors.newFixedThreadPool(16)
     private val roundRobinIndex = AtomicInteger(0)
     @Volatile private var isRunning = false
 
@@ -118,18 +120,14 @@ object SlowDnsEngine {
 
             balancerServer = ServerSocket().apply {
                 reuseAddress = true
-                bind(InetSocketAddress("127.0.0.1", localPort), 128)
+                bind(InetSocketAddress("127.0.0.1", localPort), 64)
             }
 
-            thread(start = true, name = "SlowDNS-BBR-Balancer") {
+            thread(start = true, name = "SlowDNS-Multiplexer") {
                 while (isRunning) {
                     try {
                         val clientSock = balancerServer?.accept() ?: break
                         clientSock.tcpNoDelay = true
-                        clientSock.trafficClass = 0x18
-                        clientSock.sendBufferSize = 262144
-                        clientSock.receiveBufferSize = 262144
-
                         balancerPool.execute {
                             bridgeToBoostWorker(clientSock, activeWorkerPorts)
                         }
@@ -139,7 +137,7 @@ object SlowDnsEngine {
                 }
             }
 
-            Thread.sleep(900)
+            Thread.sleep(750)
 
             val aliveCount = workerProcesses.count { it.isAlive }
             if (aliveCount > 0) {
@@ -171,39 +169,38 @@ object SlowDnsEngine {
 
             workerSock = Socket().apply {
                 tcpNoDelay = true
-                trafficClass = 0x18
-                sendBufferSize = 262144
-                receiveBufferSize = 262144
+                sendBufferSize = 131072
+                receiveBufferSize = 131072
                 connect(InetSocketAddress("127.0.0.1", targetPort), 5000)
             }
 
-            val cIn = clientSock.getInputStream()
-            val cOut = clientSock.getOutputStream()
-            val wIn = workerSock.getInputStream()
-            val wOut = workerSock.getOutputStream()
+            val cIn = BufferedInputStream(clientSock.getInputStream(), 65536)
+            val cOut = BufferedOutputStream(clientSock.getOutputStream(), 65536)
+            val wIn = BufferedInputStream(workerSock.getInputStream(), 65536)
+            val wOut = BufferedOutputStream(workerSock.getOutputStream(), 65536)
 
             val upstreamJob = balancerPool.submit {
                 try {
-                    val buf = ByteArray(131072)
+                    val buf = ByteArray(32768)
                     while (isRunning) {
                         val n = cIn.read(buf)
                         if (n == -1) break
                         wOut.write(buf, 0, n)
+                        wOut.flush()
                     }
-                    wOut.flush()
                 } catch (_: Throwable) {
                 } finally {
                     try { workerSock.close() } catch (_: Throwable) {}
                 }
             }
 
-            val buf = ByteArray(131072)
+            val buf = ByteArray(32768)
             while (isRunning) {
                 val n = wIn.read(buf)
                 if (n == -1) break
                 cOut.write(buf, 0, n)
+                cOut.flush()
             }
-            cOut.flush()
             upstreamJob.cancel(true)
         } catch (_: Throwable) {
         } finally {
@@ -231,4 +228,4 @@ object SlowDnsEngine {
         }
     }
 }
-// === END OF FILE 6 ===
+// === END OF FILE 7 ===
