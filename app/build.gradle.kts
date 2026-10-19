@@ -16,8 +16,8 @@ android {
         applicationId = "com.albert.smartvpn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 25
-        versionName = "2.5.0"
+        versionCode = 251
+        versionName = "2.5.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -72,4 +72,3 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("com.hierynomus:sshj:0.37.0")
 }
-// === END OF FILE 2 ===
