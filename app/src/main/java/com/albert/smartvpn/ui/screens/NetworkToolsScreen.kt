@@ -1,8 +1,5 @@
 package com.albert.smartvpn.ui.screens
 
-import android.content.Context
-import android.net.wifi.WifiManager
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,9 +15,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,13 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.NetworkInterface
 import java.net.Socket
-import java.net.URL
-import java.util.Collections
-import java.util.Scanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +59,7 @@ fun NetworkToolsScreen(
                     "Speedtest" -> 1
                     "Security Audit 🛡️" -> 2
                     "ShareNet" -> 3
+                    "Payload Gen" -> 4
                     else -> 0
                 },
                 edgePadding = 0.dp
@@ -75,6 +68,7 @@ fun NetworkToolsScreen(
                 Tab(selected = selectedTab == "Speedtest", onClick = { selectedTab = "Speedtest" }, text = { Text("Speedtest") })
                 Tab(selected = selectedTab == "Security Audit 🛡️", onClick = { selectedTab = "Security Audit 🛡️" }, text = { Text("Security Audit 🛡️") })
                 Tab(selected = selectedTab == "ShareNet", onClick = { selectedTab = "ShareNet" }, text = { Text("ShareNet") })
+                Tab(selected = selectedTab == "Payload Gen", onClick = { selectedTab = "Payload Gen" }, text = { Text("Payload Gen") })
             }
 
             when (selectedTab) {
@@ -82,6 +76,7 @@ fun NetworkToolsScreen(
                 "Speedtest" -> SpeedtestTabContent()
                 "Security Audit 🛡️" -> SecurityAuditTabContent()
                 "ShareNet" -> ShareNetTabContent()
+                "Payload Gen" -> PayloadGenTabContent()
                 else -> ToolsTabContent()
             }
         }
@@ -336,6 +331,52 @@ fun ShareNetTabContent() {
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun PayloadGenTabContent() {
+    val clipboardManager = LocalClipboardManager.current
+    var urlInput by remember { mutableStateOf("google.com") }
+    var payloadPreview by remember { mutableStateOf("GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]") }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Payload Preview", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = payloadPreview,
+                onValueChange = { payloadPreview = it },
+                textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { clipboardManager.setText(AnnotatedString(payloadPreview)) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF), contentColor = Color.Black)
+                ) {
+                    Text("Copy", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { VpnStateBridge.pendingGeneratedPayload.value = payloadPreview },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF00B8), contentColor = Color.White)
+                ) {
+                    Text("Apply to Config", fontWeight = FontWeight.Bold)
+                }
+            }
+            OutlinedTextField(
+                value = urlInput,
+                onValueChange = { urlInput = it },
+                label = { Text("URL / Host (e.g. google.com)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
