@@ -94,7 +94,7 @@ object Hysteria2Engine {
                 }
             """.trimIndent()
 
-            val cfgFile = File(context.cacheDir, "hy2_smartv25.json")
+            val cfgFile = File(context.cacheDir, "hy2_smart251.json")
             cfgFile.writeText(configJson)
             activeConfigFile = cfgFile
 
@@ -143,4 +143,3 @@ object Hysteria2Engine {
         activeConfigFile = null
     }
 }
-// === END OF FILE 7 ===
