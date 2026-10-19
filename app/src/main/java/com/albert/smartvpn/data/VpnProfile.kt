@@ -79,4 +79,3 @@ data class VpnProfile(
     val blockSniffers: Boolean = false,
     val playStoreInstallOnly: Boolean = false
 )
-// === END OF FILE 3 ===
