@@ -36,7 +36,8 @@ object VpnConfigParser {
                 text.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(text)
                 text.startsWith("hy2://", ignoreCase = true) ||
                     text.startsWith("hysteria2://", ignoreCase = true) -> parseHysteria2(text)
-                text.startsWith("slowdns://", ignoreCase = true) -> parseSlowDnsUri(text)
+                text.startsWith("slowdns://", ignoreCase = true) ||
+                    text.startsWith("dnstt://", ignoreCase = true) -> parseSlowDnsUri(text)
                 text.startsWith("ssh://", ignoreCase = true) -> parseSshUri(text)
                 text.contains("[Interface]", ignoreCase = true) &&
                     text.contains("[Peer]", ignoreCase = true) -> parseWireGuardConf(text)
@@ -57,7 +58,7 @@ object VpnConfigParser {
 
         val securityParam = uri.getQueryParameter("security")?.lowercase()
             ?: if (port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)) "none" else "tls"
-        val networkParam = uri.getQueryParameter("type")?.lowercase() ?: "ws"
+        val networkParam = uri.getQueryParameter("type")?.lowercase() ?: "tcp"
         val sniParam = uri.getQueryParameter("sni")
             ?: uri.getQueryParameter("host")
             ?: host
@@ -100,7 +101,7 @@ object VpnConfigParser {
         val port = obj.get("port")?.asString?.toIntOrNull() ?: 443
         val uuid = obj.get("id")?.asString?.trim() ?: return null
         val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "Imported VMESS"
-        val net = obj.get("net")?.asString?.lowercase() ?: "ws"
+        val net = obj.get("net")?.asString?.lowercase() ?: "tcp"
         val tlsField = obj.get("tls")?.asString?.lowercase() ?: ""
         val security = if (tlsField == "tls" || (port == 443 && tlsField != "none")) "tls" else "none"
         val sni = obj.get("sni")?.asString?.takeIf { it.isNotBlank() }
@@ -318,4 +319,3 @@ object VpnConfigParser {
         )
     }
 }
-// === END OF FILE 5 ===
