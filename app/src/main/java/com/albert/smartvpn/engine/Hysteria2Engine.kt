@@ -31,7 +31,7 @@ object Hysteria2Engine {
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val hy2Bin = File(nativeDir, "libhysteria2.so")
         if (!hy2Bin.exists()) {
-            VpnStateBridge.addLog("Connection failed: Hysteria2 engine binary not found.")
+            VpnStateBridge.addLog("Connection failed: Hysteria2 binary missing.")
             return false
         }
         hy2Bin.setExecutable(true)
@@ -42,15 +42,17 @@ object Hysteria2Engine {
             rawHost
         }
         val sniHost = profile.sni.trim().ifBlank { rawHost }
-        val serverEndpoint = "$resolvedIp:${profile.port}"
+        val hoppingSuffix = profile.hy2PortHopping.trim().takeIf { it.isNotEmpty() }?.let { ",$it" } ?: ""
+        val serverEndpoint = "$resolvedIp:${profile.port}$hoppingSuffix"
 
         return try {
-            val obfsBlock = if (profile.hy2Obfs.isNotBlank() && profile.hy2ObfsPassword.isNotBlank()) {
+            val salamanderPass = profile.hy2ObfsPassword.ifBlank { profile.hy2Obfs }.trim()
+            val obfsBlock = if (salamanderPass.isNotEmpty()) {
                 """
                 "obfs": {
-                  "type": "${profile.hy2Obfs.trim()}",
+                  "type": "salamander",
                   "salamander": {
-                    "password": "${profile.hy2ObfsPassword.trim()}"
+                    "password": "$salamanderPass"
                   }
                 },
                 """.trimIndent()
@@ -58,8 +60,14 @@ object Hysteria2Engine {
                 ""
             }
 
-            val upMbps = profile.hy2UpMbps.coerceIn(10, 100)
-            val downMbps = profile.hy2DownMbps.coerceIn(20, 200)
+            val pinBlock = if (profile.pinSha256.isNotBlank()) {
+                """, "pinSHA256": "${profile.pinSha256.trim()}""""
+            } else {
+                ""
+            }
+
+            val upMbps = profile.hy2UpMbps.coerceIn(10, 200)
+            val downMbps = profile.hy2DownMbps.coerceIn(20, 400)
 
             val configJson = """
                 {
@@ -68,7 +76,7 @@ object Hysteria2Engine {
                   $obfsBlock
                   "tls": {
                     "sni": "$sniHost",
-                    "insecure": true
+                    "insecure": ${profile.allowInsecure}$pinBlock
                   },
                   "bandwidth": {
                     "up": "$upMbps mbps",
@@ -86,7 +94,7 @@ object Hysteria2Engine {
                 }
             """.trimIndent()
 
-            val cfgFile = File(context.cacheDir, "hy2_live.json")
+            val cfgFile = File(context.cacheDir, "hy2_smartv25.json")
             cfgFile.writeText(configJson)
             activeConfigFile = cfgFile
 
@@ -96,7 +104,7 @@ object Hysteria2Engine {
                 .start()
 
             var socksReady = false
-            for (attempt in 1..14) {
+            for (attempt in 1..16) {
                 Thread.sleep(250)
                 if (hy2Process?.isAlive != true) break
                 try {
@@ -110,7 +118,7 @@ object Hysteria2Engine {
 
             if (hy2Process?.isAlive == true && socksReady) {
                 VpnStateBridge.addLog("HTTP/1.1 200 OK")
-                VpnStateBridge.addLog("Switching Protocols...")
+                VpnStateBridge.addLog("Hysteria2 QUIC Tunnel Connected")
                 true
             } else {
                 VpnStateBridge.addLog("Connection failed.")
@@ -135,4 +143,4 @@ object Hysteria2Engine {
         activeConfigFile = null
     }
 }
-// === END OF FILE 5 ===
+// === END OF FILE 7 ===
