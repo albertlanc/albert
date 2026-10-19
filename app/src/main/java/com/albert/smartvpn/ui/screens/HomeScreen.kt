@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -42,12 +41,12 @@ fun HomeScreen(
     onPingClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val connectionState by VpnStateBridge.connectionState.collectAsState()
     val statusMessage by VpnStateBridge.statusMessage.collectAsState()
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
     val loadBalancingEnabled by VpnStateBridge.loadBalancingEnabled.collectAsState()
     val turboSpeedEnabled by VpnStateBridge.turboSpeedEnabled.collectAsState()
+    val toastMessage by VpnStateBridge.toastMessage.collectAsState()
 
     var totalBytesRx by remember { mutableLongStateOf(0L) }
     var totalBytesTx by remember { mutableLongStateOf(0L) }
@@ -70,8 +69,6 @@ fun HomeScreen(
                 rxSpeedText = formatRate(deltaRx)
                 txSpeedText = formatRate(deltaTx)
             } else {
-                totalBytesRx = 0L
-                totalBytesTx = 0L
                 rxSpeedText = "0 B/s"
                 txSpeedText = "0 B/s"
                 lastRx = TrafficStats.getTotalRxBytes()
@@ -88,238 +85,317 @@ fun HomeScreen(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 4000 else 12000, easing = LinearEasing)
+            animation = tween(durationMillis = if (isConnected) 3600 else 12000, easing = LinearEasing)
         ),
         label = "OuterRing"
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Switch(
-                    checked = loadBalancingEnabled,
-                    onCheckedChange = { VpnStateBridge.loadBalancingEnabled.value = it },
-                    modifier = Modifier.scale(0.75f)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Load Balancing",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(
-                        if (turboSpeedEnabled) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .clickable { VpnStateBridge.turboSpeedEnabled.value = !turboSpeedEnabled }
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Bolt,
-                    contentDescription = null,
-                    tint = if (turboSpeedEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Turbo",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (turboSpeedEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // STRICT LOGIC: Country flag card displays ONLY when a configuration file is loaded and selected
-        if (activeProfile != null) {
+            // 1. TOP HEADER BAR: Load Balancing Switch + 🚀 Turbo Pill Toggle
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), RoundedCornerShape(16.dp)),
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(16.dp)),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = loadBalancingEnabled,
+                            onCheckedChange = { VpnStateBridge.loadBalancingEnabled.value = it },
+                            modifier = Modifier.scale(0.8f)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Load Balancing",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(
+                                if (turboSpeedEnabled) Color(0xFF0B253A)
+                                else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (turboSpeedEnabled) Color(0xFF00E5FF) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                shape = RoundedCornerShape(20.dp)
+                            )
+                            .clickable { VpnStateBridge.turboSpeedEnabled.value = !turboSpeedEnabled }
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = "🚀 Turbo",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (turboSpeedEnabled) Color(0xFF00E5FF) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // 2. ACTIVE PROFILE CARD (Country Flag ONLY shown when a configuration is loaded)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.75f), RoundedCornerShape(18.dp)),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
+                )
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(vertical = 20.dp, horizontal = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    if (activeProfile != null) {
+                        Text(
+                            text = activeProfile.countryFlag,
+                            fontSize = 32.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = activeProfile.name.uppercase(),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}",
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        Text(
+                            text = "NO CONFIGURATION LOADED",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap + or Configs tab to import or create a configuration",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+
+            // 3. STATUS HEADER & DIVIDER
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = when (connectionState) {
+                        "CONNECTED" -> "CONNECTED"
+                        "CONNECTING" -> "CONNECTING..."
+                        else -> "NOT CONNECTED"
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = when (connectionState) {
+                        "CONNECTED" -> Color(0xFF00E676)
+                        "CONNECTING" -> Color(0xFFFFB300)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Divider(
+                    modifier = Modifier.fillMaxWidth(0.75f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Total Usage: ${formatBytes(totalBytesRx + totalBytesTx)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // 4. UPLINK & DOWNLINK METRICS ROW
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.Start) {
                     Text(
-                        text = activeProfile.countryFlag,
-                        fontSize = 28.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = activeProfile.name.uppercase(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center
+                        text = "Uplink",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}",
+                        text = txSpeedText,
                         fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+                    Text(
+                        text = formatBytes(totalBytesTx),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Downlink",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = rxSpeedText,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = formatBytes(totalBytesRx),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 5. LARGE DOUBLE-RING CIRCULAR CONNECT BUTTON
+            Box(
+                modifier = Modifier
+                    .size(176.dp)
+                    .clickable { onToggleConnection() },
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        color = accentColor.copy(alpha = 0.35f),
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+                    if (isConnected || connectionState == "CONNECTING") {
+                        rotate(outerAngle) {
+                            drawArc(
+                                color = if (isConnected) Color(0xFF00E676) else accentColor,
+                                startAngle = 0f,
+                                sweepAngle = 110f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                            drawArc(
+                                color = if (isConnected) Color(0xFF00E676) else accentColor,
+                                startAngle = 180f,
+                                sweepAngle = 110f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(144.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    MaterialTheme.colorScheme.surface
+                                )
+                            )
+                        )
+                        .border(
+                            width = 2.dp,
+                            color = if (isConnected) Color(0xFF00E676) else accentColor.copy(alpha = 0.65f),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.PowerSettingsNew,
+                            contentDescription = "Connect",
+                            tint = if (isConnected) Color(0xFF00E676) else Color.White,
+                            modifier = Modifier.size(38.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (connectionState) {
+                                "CONNECTED" -> "CONNECTED"
+                                "CONNECTING" -> "WAIT..."
+                                else -> "CONNECT"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isConnected) Color(0xFF00E676) else Color.White,
+                            letterSpacing = 1.sp
+                        )
+                    }
                 }
             }
         }
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(22.dp)),
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
+        if (toastMessage.isNotEmpty()) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxSize()
+                    .padding(bottom = 24.dp),
+                contentAlignment = Alignment.BottomCenter
             ) {
-                Text(
-                    text = statusMessage,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (isConnected) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurface,
-                    letterSpacing = 1.5.sp
-                )
-
-                Divider(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
-                )
-
-                Text(
-                    text = "Total Usage: ${formatBytes(totalBytesRx + totalBytesTx)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(148.dp)
-                        .clickable { onToggleConnection() },
-                    contentAlignment = Alignment.Center
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                    shadowElevation = 8.dp
                 ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        rotate(outerAngle) {
-                            drawArc(
-                                color = accentColor,
-                                startAngle = 0f,
-                                sweepAngle = 120f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = accentColor.copy(alpha = 0.4f),
-                                startAngle = 180f,
-                                sweepAngle = 120f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(112.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.primaryContainer,
-                                        MaterialTheme.colorScheme.surface
-                                    )
-                                )
-                            )
-                            .border(2.dp, accentColor, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.PowerSettingsNew,
-                                contentDescription = "Connect",
-                                tint = if (isConnected) Color(0xFF00E676) else accentColor,
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = if (isConnected) "DISCONNECT" else "CONNECT",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (isConnected) Color(0xFF00E676) else accentColor
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(vertical = 12.dp, horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowUpward, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Uplink", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(txSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(formatBytes(totalBytesTx), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-
-                    Divider(modifier = Modifier.height(36.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowDownward, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Downlink", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(rxSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(formatBytes(totalBytesRx), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(
+                        text = toastMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                    )
                 }
             }
         }
