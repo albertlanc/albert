@@ -16,9 +16,11 @@ import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
 import com.albert.smartvpn.engine.Hysteria2Engine
+import com.albert.smartvpn.engine.OpenVpnEngine
 import com.albert.smartvpn.engine.SlowDnsEngine
 import com.albert.smartvpn.engine.SshEngine
 import com.albert.smartvpn.engine.Tun2Socks
+import com.albert.smartvpn.engine.WireGuardEngine
 import com.albert.smartvpn.engine.XrayCore
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -152,13 +154,17 @@ class SmartVpnService : VpnService() {
                         VpnStateBridge.addLog("Connecting...")
                         Hysteria2Engine.startHysteria2(applicationContext, profile, localSocksPort)
                     }
+                    proto == "OPENVPN" -> {
+                        VpnStateBridge.addLog("Connecting...")
+                        OpenVpnEngine.startOpenVpn(applicationContext, profile, localSocksPort)
+                    }
                     proto == "WIREGUARD" -> {
                         if (profile.wgPrivateKey.isBlank() || profile.wgPublicKey.isBlank()) {
-                            VpnStateBridge.addLog("Connection failed.")
+                            VpnStateBridge.addLog("Connection failed: Missing WireGuard keys.")
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting...")
-                            XrayCore.RunXrayFromJSON(buildWireGuardXrayJson(profile, localSocksPort))
+                            XrayCore.RunXrayFromJSON(WireGuardEngine.buildWireGuardConfigJson(profile, localSocksPort))
                         }
                     }
                     else -> {
@@ -267,12 +273,6 @@ class SmartVpnService : VpnService() {
         return """{"log":{"loglevel":"none"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}}]}"""
     }
 
-    private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
-        val cleanAddr = profile.wgAddress.trim().ifBlank { "10.0.0.2/32" }
-        val pskField = if (profile.wgPresharedKey.isNotBlank()) ", \"preSharedKey\": \"${profile.wgPresharedKey.trim()}\"" else ""
-        return """{"log":{"loglevel":"none"},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"wireguard","settings":{"secretKey":"${profile.wgPrivateKey.trim()}","address":["$cleanAddr"],"peers":[{"publicKey":"${profile.wgPublicKey.trim()}","endpoint":"${profile.server.trim()}:${profile.port}"$pskField}],"mtu":${profile.wgMtu.coerceIn(1280, 1500)}}}]}"""
-    }
-
     private fun stopVpnPipeline(resetStatus: Boolean) {
         activeConnectJob?.cancel()
         VpnStateBridge.slowDnsBoostEnabled.value = false
@@ -284,6 +284,7 @@ class SmartVpnService : VpnService() {
                 SshEngine.stopSshTunnel()
                 SlowDnsEngine.stopSlowDns()
                 Hysteria2Engine.stopHysteria2()
+                OpenVpnEngine.stopOpenVpn()
                 vpnInterface?.close()
                 vpnInterface = null
                 if (resetStatus) {
