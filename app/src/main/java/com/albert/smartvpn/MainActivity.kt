@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("SMARTV2.5", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
-                                Text("VPN TUNNEL • v2.5 - PRO", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
+                                Text("VPN TUNNEL • v2.5.1 - PRO", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                             }
                         }
 
@@ -207,9 +207,42 @@ class MainActivity : ComponentActivity() {
                             Divider(modifier = Modifier.padding(vertical = 8.dp))
                             Text("Extras", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 12.dp))
 
-                            NavigationDrawerItem(label = { Text("Telegram Channel") }, selected = false, icon = { Icon(Icons.Default.Send, null) }, onClick = { scope.launch { drawerState.close() } })
-                            NavigationDrawerItem(label = { Text("Telegram Group") }, selected = false, icon = { Icon(Icons.Default.Groups, null) }, onClick = { scope.launch { drawerState.close() } })
-                            NavigationDrawerItem(label = { Text("WhatsApp Community") }, selected = false, icon = { Icon(Icons.Default.Chat, null) }, onClick = { scope.launch { drawerState.close() } })
+                            NavigationDrawerItem(
+                                label = { Text("Telegram Channel") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Send, null) },
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/"))
+                                        context.startActivity(intent)
+                                    } catch (_: Throwable) {}
+                                }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("Telegram Group") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Groups, null) },
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/"))
+                                        context.startActivity(intent)
+                                    } catch (_: Throwable) {}
+                                }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("WhatsApp Community") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Chat, null) },
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://whatsapp.com/"))
+                                        context.startActivity(intent)
+                                    } catch (_: Throwable) {}
+                                }
+                            )
                             NavigationDrawerItem(label = { Text("Network Tools") }, selected = false, icon = { Icon(Icons.Default.Build, null) }, onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } })
                             NavigationDrawerItem(label = { Text("Payload Generator") }, selected = false, icon = { Icon(Icons.Default.Code, null) }, onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } })
                             NavigationDrawerItem(
@@ -393,7 +426,7 @@ class MainActivity : ComponentActivity() {
                 Spacer(modifier = Modifier.height(20.dp))
                 Text("SMARTV2.5", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
                 Spacer(modifier = Modifier.height(6.dp))
-                Text("PRO VPN TUNNEL • Multi-Protocol Engine", fontSize = 12.sp, color = Color(0xFF00E5FF), textAlign = TextAlign.Center)
+                Text("PRO VPN TUNNEL • v2.5.1", fontSize = 12.sp, color = Color(0xFF00E5FF), textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(onClick = onEnterNow, shape = RoundedCornerShape(12.dp)) {
                     Text("Enter Dashboard →", fontWeight = FontWeight.Bold)
