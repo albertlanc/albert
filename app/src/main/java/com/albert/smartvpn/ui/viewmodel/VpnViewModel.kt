@@ -47,10 +47,9 @@ object VpnStateBridge {
     private val _connectedSinceMs = MutableStateFlow(0L)
     val connectedSinceMs: StateFlow<Long> = _connectedSinceMs
 
-    private val _logs = MutableStateFlow<List<String>>(listOf("Smartv2.5 VPN Tunnel Ready."))
+    private val _logs = MutableStateFlow<List<String>>(listOf("Smart 2.5.1 VPN Tunnel Ready."))
     val logs: StateFlow<List<String>> = _logs
 
-    // Default theme set to Synthwave as shown in the video
     val themeMode = MutableStateFlow("Synthwave")
     val loadBalancingEnabled = MutableStateFlow(false)
     val turboSpeedEnabled = MutableStateFlow(true)
@@ -76,7 +75,6 @@ object VpnStateBridge {
     val shareNetPort = MutableStateFlow(10809)
     val dontShowManualOnStartup = MutableStateFlow(false)
 
-    // Controls sub-screens opened from the drawer (PAYLOAD_GEN, RESPONSE_CHECKER, SHARENET, NETWORK_TOOLS)
     val activeDrawerScreen = MutableStateFlow("NONE")
     val pendingGeneratedPayload = MutableStateFlow("")
 
@@ -93,7 +91,7 @@ object VpnStateBridge {
     }
 
     fun addDebugOnlyLog(message: String) {
-        Log.d("Smartv2.5", message)
+        Log.d("Smart2.5.1", message)
     }
 
     fun addLog(message: String) {
@@ -109,8 +107,8 @@ object VpnStateBridge {
     fun getDeviceHardwareId(context: Context): String {
         cachedHwid?.let { return it }
         val rawId = try {
-            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV25"
-        } catch (_: Throwable) { "SMARTV25" }
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMART251"
+        } catch (_: Throwable) { "SMART251" }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
         return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also { cachedHwid = it }
@@ -119,7 +117,7 @@ object VpnStateBridge {
 
 object ConfigCryptoHelper {
     private val gson = Gson()
-    private const val PEPPER = "Smartv2.5-Pro-Enclave-Vault-2026"
+    private const val PEPPER = "Smart2.5.1-Pro-Enclave-Vault-2026"
 
     private fun deriveBoundKey(hwid: String, passphrase: String): SecretKeySpec {
         var hash = "$PEPPER|HWID:${hwid.trim().uppercase()}|PASS:${passphrase.trim()}".toByteArray(Charsets.UTF_8)
@@ -361,4 +359,3 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-// === END OF FILE 6 ===
