@@ -32,7 +32,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -76,7 +75,7 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK) {
             startVpnService()
         } else {
-            VpnStateBridge.updateState("DISCONNECTED", "Permission Denied")
+            VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
             VpnStateBridge.addLog("Disconnected.")
         }
     }
@@ -117,8 +116,8 @@ class MainActivity : ComponentActivity() {
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
         val pagerState = rememberPagerState(initialPage = 0, pageCount = { 4 })
-        var activeToolPage by remember { mutableStateOf("PING") }
         var showThemeMenu by remember { mutableStateOf(false) }
+        var showUserManual by remember { mutableStateOf(false) }
 
         val isConnected by viewModel.isConnected.collectAsState()
         val connectionState by viewModel.connectionState.collectAsState()
@@ -127,13 +126,7 @@ class MainActivity : ComponentActivity() {
         val activeProfile = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
         val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
 
-        val themeOptions = listOf(
-            "AUTO" to "Auto (Day/Night)",
-            "CYBER_DARK" to "Cyber Obsidian (Dark)",
-            "SOLAR_LIGHT" to "Solar Crystal (Day)",
-            "ROYAL_GOLD" to "Royal Amethyst & Gold",
-            "EMERALD_MATRIX" to "Emerald Matrix"
-        )
+        val themeOptions = listOf("Synthwave", "Default", "Cyberpunk", "Minimalist", "Corporate blue", "Matte cyan", "Monochrome")
 
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -141,54 +134,109 @@ class MainActivity : ComponentActivity() {
                 ModalDrawerSheet(
                     drawerContainerColor = MaterialTheme.colorScheme.surface,
                     drawerContentColor = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.width(305.dp)
+                    modifier = Modifier.width(310.dp)
                 ) {
                     Column(
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                            SmartVpnCrestLogo(size = 50.dp)
-                            Spacer(modifier = Modifier.width(12.dp))
+                        // DRAWER HEADER GRADIENT (Pink-Purple-Cyan shown in video at 00:06)[cite: 3]
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(Color(0xFFFF00B8), Color(0xFF7000FF), Color(0xFF00E5FF))
+                                    )
+                                )
+                                .padding(16.dp),
+                            contentAlignment = Alignment.BottomStart
+                        ) {
                             Column {
-                                Text("SMART VPN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-                                Text("v2.0 • Pro Tunnel Core", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("HARDWARE ID (HWID)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(deviceId, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    IconButton(onClick = { clipboardManager.setText(AnnotatedString(deviceId)) }, modifier = Modifier.size(28.dp)) {
-                                        Icon(Icons.Default.ContentCopy, "Copy ID", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color.Black.copy(alpha = 0.35f),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Shield, null, tint = Color.White, modifier = Modifier.size(28.dp))
                                     }
                                 }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("SMARTV2.5", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
+                                Text("VPN TUNNEL • v2.5 - PRO by Smartv2.5", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                             }
                         }
 
-                        Divider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        val drawerTools = listOf(
-                            Triple("PING", "Ping / Host Checker", Icons.Default.NetworkCheck),
-                            Triple("GEOIP", "My IP & GeoIP Lookup", Icons.Default.Public),
-                            Triple("HOTSHARE", "Wi-Fi Hotshare", Icons.Default.WifiTethering),
-                            Triple("SSH_SETTINGS", "Advanced Settings", Icons.Default.Tune),
-                            Triple("PAYLOAD_GEN", "Payload Generator", Icons.Default.Code),
-                            Triple("SNI_HUNTER", "SNI / Bug Hunter", Icons.Default.BugReport)
-                        )
-                        drawerTools.forEach { (key, label, icon) ->
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             NavigationDrawerItem(
-                                label = { Text(label) },
-                                selected = pagerState.currentPage == 3 && activeToolPage == key,
-                                icon = { Icon(icon, null) },
-                                onClick = {
-                                    activeToolPage = key
-                                    scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) }
-                                }
+                                label = { Text("Settings") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Settings, null) },
+                                onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } }
                             )
+                            NavigationDrawerItem(
+                                label = { Text("Response Checker") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.NetworkCheck, null) },
+                                onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("ShareNet") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.WifiTethering, null) },
+                                onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("User Manual & Guide") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.MenuBook, null) },
+                                onClick = { scope.launch { drawerState.close() }; showUserManual = true }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("About") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Info, null) },
+                                onClick = { scope.launch { drawerState.close() } }
+                            )
+
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text("Extras", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 12.dp))
+
+                            NavigationDrawerItem(label = { Text("Telegram Channel") }, selected = false, icon = { Icon(Icons.Default.Send, null) }, onClick = { scope.launch { drawerState.close() } })
+                            NavigationDrawerItem(label = { Text("Telegram Group") }, selected = false, icon = { Icon(Icons.Default.Groups, null) }, onClick = { scope.launch { drawerState.close() } })
+                            NavigationDrawerItem(label = { Text("WhatsApp Community") }, selected = false, icon = { Icon(Icons.Default.Chat, null) }, onClick = { scope.launch { drawerState.close() } })
+                            NavigationDrawerItem(label = { Text("Network Tools") }, selected = false, icon = { Icon(Icons.Default.Build, null) }, onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } })
+                            NavigationDrawerItem(label = { Text("Payload Generator") }, selected = false, icon = { Icon(Icons.Default.Code, null) }, onClick = { scope.launch { drawerState.close(); pagerState.animateScrollToPage(3) } })
+                            NavigationDrawerItem(
+                                label = { Text("Theme Settings") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Palette, null) },
+                                onClick = { scope.launch { drawerState.close() }; showThemeMenu = true }
+                            )
+                            NavigationDrawerItem(
+                                label = { Text("Share App") },
+                                selected = false,
+                                icon = { Icon(Icons.Default.Share, null) },
+                                onClick = { scope.launch { drawerState.close() }; shareSmartVpnApp() }
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {},
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107), contentColor = Color.Black),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.WorkspacePremium, null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("VIP ALL-ACCESS UNLOCKED", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
@@ -199,29 +247,35 @@ class MainActivity : ComponentActivity() {
                     TopAppBar(
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                SmartVpnCrestLogo(size = 28.dp)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text("SMART VPN v2.0", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, letterSpacing = 1.sp)
+                                Text("Smartv2.5", fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = 0.5.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFFFFC107)
+                                ) {
+                                    Text(
+                                        text = "PRO",
+                                        color = Color.Black,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         },
                         navigationIcon = {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Default.Menu, "Menu", tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Default.Menu, "Open Menu")
                             }
                         },
                         actions = {
-                            Box {
-                                IconButton(onClick = { showThemeMenu = true }) {
-                                    Icon(Icons.Default.Palette, "Theme", tint = MaterialTheme.colorScheme.primary)
-                                }
-                                DropdownMenu(expanded = showThemeMenu, onDismissRequest = { showThemeMenu = false }) {
-                                    themeOptions.forEach { (key, label) ->
-                                        DropdownMenuItem(
-                                            text = { Text(label, fontWeight = if (currentThemeMode == key) FontWeight.Bold else FontWeight.Normal) },
-                                            onClick = { VpnStateBridge.themeMode.value = key; showThemeMenu = false }
-                                        )
-                                    }
-                                }
+                            // USER MANUAL DIALOG BUTTON (Matches video top bar icon at 00:00)[cite: 3]
+                            IconButton(onClick = { showUserManual = true }) {
+                                Icon(Icons.Default.MenuBook, "User Manual", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            // QUICK IMPORT BUTTON (Matches video top bar '+' icon at 00:00)[cite: 3]
+                            IconButton(onClick = { scope.launch { pagerState.animateScrollToPage(1) } }) {
+                                Icon(Icons.Default.AddBox, "Add Config", tint = MaterialTheme.colorScheme.primary)
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -232,7 +286,7 @@ class MainActivity : ComponentActivity() {
                         NavigationBarItem(selected = pagerState.currentPage == 0, onClick = { scope.launch { pagerState.animateScrollToPage(0) } }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
                         NavigationBarItem(selected = pagerState.currentPage == 1, onClick = { scope.launch { pagerState.animateScrollToPage(1) } }, icon = { Icon(Icons.Default.List, null) }, label = { Text("Configs") })
                         NavigationBarItem(selected = pagerState.currentPage == 2, onClick = { scope.launch { pagerState.animateScrollToPage(2) } }, icon = { Icon(Icons.Default.Article, null) }, label = { Text("Logs") })
-                        NavigationBarItem(selected = pagerState.currentPage == 3, onClick = { scope.launch { pagerState.animateScrollToPage(3) } }, icon = { Icon(Icons.Default.Build, null) }, label = { Text("Tools") })
+                        NavigationBarItem(selected = pagerState.currentPage == 3, onClick = { scope.launch { pagerState.animateScrollToPage(3) } }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                     }
                 }
             ) { innerPadding ->
@@ -251,14 +305,71 @@ class MainActivity : ComponentActivity() {
                             profiles = profiles,
                             onSelectProfile = { viewModel.selectProfile(it.id) },
                             onDeleteProfile = { viewModel.deleteProfile(it) },
+                            onDuplicateProfile = { viewModel.duplicateProfile(it) },
+                            onPingProfile = { viewModel.pingSingleProfile(it) },
+                            onPingAllProfiles = { viewModel.pingAllProfiles() },
                             onImportClipboard = { viewModel.importFromClipboard(it) },
                             onSaveProfile = { viewModel.saveManualProfile(it) }
                         )
                         2 -> LogsScreen(logs = viewModel.logs.collectAsState().value)
-                        3 -> NetworkToolsScreen(initialToolPage = activeToolPage)
+                        3 -> NetworkToolsScreen()
                     }
                 }
             }
+        }
+
+        // APP THEME DIALOG (Matches video at 00:29)[cite: 3]
+        if (showThemeMenu) {
+            AlertDialog(
+                onDismissRequest = { showThemeMenu = false },
+                title = { Text("App Theme") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        themeOptions.forEach { th ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { VpnStateBridge.themeMode.value = th; showThemeMenu = false }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = currentThemeMode == th, onClick = { VpnStateBridge.themeMode.value = th; showThemeMenu = false })
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(th, fontWeight = if (currentThemeMode == th) FontWeight.Bold else FontWeight.Normal)
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showThemeMenu = false }) { Text("Close") } }
+            )
+        }
+
+        // USER MANUAL & GUIDE DIALOG (Matches video at 01:20)[cite: 3]
+        if (showUserManual) {
+            AlertDialog(
+                onDismissRequest = { showUserManual = false },
+                title = { Text("Smartv2.5 VPN User Manual") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(350.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Important Tips — Read Carefully", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text("• Disable Battery Optimization: Crucial to keep the tunnel active in background.\n• Turn Off Android Private DNS: Prevents upstream DNS interception.\n• Keep Device Time Set to Automatic: Required for TLS and WebSocket handshakes.\n• Mobile Data vs Wi-Fi Lock: HWID-locked configs will self-destruct if unauthorized.", style = MaterialTheme.typography.bodySmall)
+                        Divider()
+                        Text("Speed Acceleration & Multiplexing Engine", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text("• Multiplexing (Any Mux): Multiplex concurrent TCP requests over a single persistent connection.\n• SSH Multiplexing & TCP_NODELAY: Disables Nagle algorithm for instant packet delivery.", style = MaterialTheme.typography.bodySmall)
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { showUserManual = false }) {
+                        Text("I Understand & Got It")
+                    }
+                }
+            )
         }
     }
 
@@ -266,8 +377,8 @@ class MainActivity : ComponentActivity() {
     private fun SmartVpnSplashScreen(onEnterNow: () -> Unit) {
         Box(
             modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color(0xFF030714), Color(0xFF0A183D), Color(0xFF050B1E)))
-            ),
+                Brush.verticalGradient(listOf(Color(0xFF160724), Color(0xFF2B1045), Color(0xFF12061E))
+            )),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -275,11 +386,19 @@ class MainActivity : ComponentActivity() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                SmartVpnCrestLogo(size = 110.dp)
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(96.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Shield, null, tint = Color.White, modifier = Modifier.size(56.dp))
+                    }
+                }
                 Spacer(modifier = Modifier.height(20.dp))
-                Text("SMART VPN v2.0", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("High-Speed Secure Tunnel & Multi-Protocol Core", fontSize = 12.sp, color = Color(0xFF00F0FF), textAlign = TextAlign.Center)
+                Text("SMARTV2.5", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("PRO VPN TUNNEL • Multi-Protocol Engine", fontSize = 12.sp, color = Color(0xFF00E5FF), textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(onClick = onEnterNow, shape = RoundedCornerShape(12.dp)) {
                     Text("Enter Dashboard →", fontWeight = FontWeight.Bold)
@@ -299,7 +418,7 @@ class MainActivity : ComponentActivity() {
     private fun toggleVpn(isActiveOrConnecting: Boolean) {
         if (isActiveOrConnecting) {
             startService(Intent(this, SmartVpnService::class.java).apply { action = SmartVpnService.ACTION_STOP })
-            VpnStateBridge.updateState("DISCONNECTED", "Idle")
+            VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
         } else {
             requestNotificationPermissionIfNeeded()
             val intent = VpnService.prepare(this)
@@ -308,53 +427,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVpnService() {
-        VpnStateBridge.updateState("CONNECTING", "Connecting...")
+        VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
         ContextCompat.startForegroundService(this, Intent(this, SmartVpnService::class.java).apply { action = SmartVpnService.ACTION_START })
     }
-}
 
-@Composable
-fun SmartVpnCrestLogo(size: Dp) {
-    Canvas(modifier = Modifier.size(size)) {
-        val w = this.size.width
-        val h = this.size.height
-        val cx = w / 2f
-        val cy = h / 2f
-        val r = w * 0.46f
-
-        val hexPath = Path().apply {
-            for (i in 0..5) {
-                val a = Math.toRadians((60.0 * i) - 90.0)
-                val x = cx + (r * cos(a)).toFloat()
-                val y = cy + (r * sin(a)).toFloat()
-                if (i == 0) moveTo(x, y) else lineTo(x, y)
+    private fun shareSmartVpnApp() {
+        try {
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Smartv2.5 PRO VPN")
+                putExtra(Intent.EXTRA_TEXT, "Download Smartv2.5 PRO — Advanced Multi-Protocol Stealth Tunnel (SSH, VLESS, VMess, Trojan, ShadowSocks, WireGuard, OpenVPN, Hysteria2 & SlowDNS).")
             }
-            close()
-        }
-        drawPath(hexPath, Brush.linearGradient(listOf(Color(0xFF0A2463), Color(0xFF040D26))))
-        drawPath(hexPath, Brush.linearGradient(listOf(Color(0xFFFFC107), Color(0xFF00E676), Color(0xFF00F0FF))), style = Stroke(w * 0.06f, join = StrokeJoin.Round))
-
-        val shieldPath = Path().apply {
-            moveTo(cx, h * 0.20f)
-            lineTo(w * 0.76f, h * 0.31f)
-            lineTo(w * 0.76f, h * 0.53f)
-            cubicTo(w * 0.76f, h * 0.69f, cx + w * 0.12f, h * 0.79f, cx, h * 0.84f)
-            cubicTo(cx - w * 0.12f, h * 0.79f, w * 0.24f, h * 0.69f, w * 0.24f, h * 0.53f)
-            lineTo(w * 0.24f, h * 0.31f)
-            close()
-        }
-        drawPath(shieldPath, color = Color(0xFF00E676), style = Stroke(w * 0.04f, join = StrokeJoin.Round))
-
-        val boltPath = Path().apply {
-            moveTo(cx + w * 0.04f, h * 0.28f)
-            lineTo(cx - w * 0.11f, h * 0.52f)
-            lineTo(cx + w * 0.01f, h * 0.52f)
-            lineTo(cx - w * 0.04f, h * 0.74f)
-            lineTo(cx + w * 0.12f, h * 0.47f)
-            lineTo(cx, h * 0.47f)
-            close()
-        }
-        drawPath(boltPath, color = Color(0xFFFFC107))
+            startActivity(Intent.createChooser(sendIntent, "Share Smartv2.5"))
+        } catch (_: Throwable) {}
     }
 }
-// === END OF FILE ===
+// === END OF FILE 15 ===
