@@ -22,8 +22,7 @@ private val SynthwaveColorScheme = darkColorScheme(
     surface = Color(0xFF1F0A33),
     onSurface = Color(0xFFF5E9FF),
     surfaceVariant = Color(0xFF2B1045),
-    onSurfaceVariant = Color(0xFFC9B3DEC)
-        .let { Color(0xFFC8B2E0) },
+    onSurfaceVariant = Color(0xFFC8B2E0),
     error = Color(0xFFFF4D6D)
 )
 
@@ -139,4 +138,3 @@ fun SmartVpnTheme(
         content = content
     )
 }
-// === END OF FILE 4 ===
