@@ -45,33 +45,35 @@ fun HomeScreen(
     val connectionState by VpnStateBridge.connectionState.collectAsState()
     val statusMessage by VpnStateBridge.statusMessage.collectAsState()
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
-    val pingResultText by VpnStateBridge.pingResultText.collectAsState()
-    val isPinging by VpnStateBridge.isPinging.collectAsState()
-    val customDns1 by VpnStateBridge.customDns1.collectAsState()
-    val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
+    val loadBalancingEnabled by VpnStateBridge.loadBalancingEnabled.collectAsState()
+    val turboSpeedEnabled by VpnStateBridge.turboSpeedEnabled.collectAsState()
+    val toastMessage by VpnStateBridge.toastMessage.collectAsState()
 
-    var elapsedSeconds by remember { mutableLongStateOf(0L) }
-    var rxSpeedText by remember { mutableStateOf("0.0 KB/s") }
-    var txSpeedText by remember { mutableStateOf("0.0 KB/s") }
+    var totalBytesRx by remember { mutableLongStateOf(0L) }
+    var totalBytesTx by remember { mutableLongStateOf(0L) }
+    var rxSpeedText by remember { mutableStateOf("0 B/s") }
+    var txSpeedText by remember { mutableStateOf("0 B/s") }
 
     LaunchedEffect(isConnected, connectedSinceMs) {
         var lastRx = TrafficStats.getTotalRxBytes()
         var lastTx = TrafficStats.getTotalTxBytes()
         while (true) {
             if (isConnected && connectedSinceMs > 0L) {
-                elapsedSeconds = (System.currentTimeMillis() - connectedSinceMs) / 1000L
                 val nowRx = TrafficStats.getTotalRxBytes()
                 val nowTx = TrafficStats.getTotalTxBytes()
                 val deltaRx = (nowRx - lastRx).coerceAtLeast(0L)
                 val deltaTx = (nowTx - lastTx).coerceAtLeast(0L)
                 lastRx = nowRx
                 lastTx = nowTx
+                totalBytesRx += deltaRx
+                totalBytesTx += deltaTx
                 rxSpeedText = formatRate(deltaRx)
                 txSpeedText = formatRate(deltaTx)
             } else {
-                elapsedSeconds = 0L
-                rxSpeedText = "0.0 KB/s"
-                txSpeedText = "0.0 KB/s"
+                totalBytesRx = 0L
+                totalBytesTx = 0L
+                rxSpeedText = "0 B/s"
+                txSpeedText = "0 B/s"
                 lastRx = TrafficStats.getTotalRxBytes()
                 lastTx = TrafficStats.getTotalTxBytes()
             }
@@ -79,170 +81,159 @@ fun HomeScreen(
         }
     }
 
-    val formattedTimer = remember(elapsedSeconds) {
-        val hrs = elapsedSeconds / 3600
-        val mins = (elapsedSeconds % 3600) / 60
-        val secs = elapsedSeconds % 60
-        "%02d:%02d:%02d".format(hrs, mins, secs)
-    }
-
     val isChecked = connectionState == "CONNECTED" || connectionState == "CONNECTING"
-
-    val accentColor by animateColorAsState(
-        targetValue = when (connectionState) {
-            "CONNECTED" -> MaterialTheme.colorScheme.secondary
-            "CONNECTING" -> Color(0xFFFF9800)
-            else -> MaterialTheme.colorScheme.primary
-        },
-        label = "AccentColor"
-    )
+    val accentColor = MaterialTheme.colorScheme.primary
 
     val infiniteTransition = rememberInfiniteTransition(label = "ReactorRings")
     val outerAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 4000 else 10000, easing = LinearEasing)
+            animation = tween(durationMillis = if (isConnected) 4000 else 12000, easing = LinearEasing)
         ),
         label = "OuterRing"
     )
-    val innerAngle by infiniteTransition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 2800 else 8000, easing = LinearEasing)
-        ),
-        label = "InnerRing"
-    )
-
-    val protocolEngineDisplay = remember(activeProfile) {
-        if (activeProfile == null) "READY"
-        else "${activeProfile.protocol.uppercase()} (${activeProfile.port})"
-    }
-
-    val securityLayerDisplay = remember(activeProfile) {
-        if (activeProfile == null) {
-            "SECURE / TLS"
-        } else {
-            val proto = activeProfile.protocol.uppercase()
-            val sec = activeProfile.security.uppercase()
-            val net = activeProfile.network.uppercase()
-            when {
-                proto in listOf("VLESS", "VMESS", "TROJAN") -> {
-                    val tlsLabel = if (activeProfile.port == 80 || sec == "NONE") "NO-TLS (80)" else "TLS ($net)"
-                    "$proto • $tlsLabel"
-                }
-                proto == "SLOWDNS" -> "SLOWDNS • DNSTT"
-                proto.contains("SSH") -> "$proto • ${if (sec == "TLS" || activeProfile.port == 443) "TLSv1.3" else "DIRECT"}"
-                proto == "WIREGUARD" -> "WIREGUARD • NOISE"
-                proto == "HYSTERIA2" -> "HYSTERIA2 • QUIC"
-                else -> "$proto • $sec"
-            }
-        }
-    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+            .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. TOP CONNECT / DISCONNECT CHECKBOX COMMAND DECK
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.5.dp, accentColor.copy(alpha = 0.8f), RoundedCornerShape(18.dp))
-                .clickable { onToggleConnection() },
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        // 1. TOP BAR SWITCHES: Load Balancing + Turbo Speed Pill
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Checkbox(
-                        checked = isChecked,
-                        onCheckedChange = { onToggleConnection() },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = accentColor,
-                            uncheckedColor = MaterialTheme.colorScheme.primary,
-                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = when (connectionState) {
-                                "CONNECTED" -> "TUNNEL CONNECTED"
-                                "CONNECTING" -> "CONNECTING..."
-                                else -> "CONNECT VPN TUNNEL"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = accentColor
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Status: $statusMessage",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Switch(
+                    checked = loadBalancingEnabled,
+                    onCheckedChange = { VpnStateBridge.loadBalancingEnabled.value = it },
+                    modifier = Modifier.scale(0.75f)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Load Balancing",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
 
-                if (connectionState == "CONNECTING") {
-                    CircularProgressIndicator(
-                        color = accentColor,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(32.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(
+                        if (turboSpeedEnabled) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(accentColor.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isConnected) Icons.Default.VerifiedUser else Icons.Default.PowerSettingsNew,
-                            contentDescription = "Toggle Tunnel",
-                            tint = accentColor
-                        )
-                    }
-                }
+                    .clickable { VpnStateBridge.turboSpeedEnabled.value = !turboSpeedEnabled }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Bolt,
+                    contentDescription = null,
+                    tint = if (turboSpeedEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Turbo",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (turboSpeedEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        // 2. QUANTUM ORBITAL REACTOR CORE + PING BUTTON BENEATH STATUS + LIVE SPEEDOMETER
+        // 2. ACTIVE CONFIGURATION DISPLAY CARD (NEON PURPLE BORDER + FLAG)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), RoundedCornerShape(22.dp)),
+                .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), RoundedCornerShape(16.dp)),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = activeProfile?.countryFlag ?: "🇳🇱",
+                    fontSize = 28.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = activeProfile?.name?.uppercase() ?: "NO CONFIGURATION SELECTED",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (activeProfile != null) "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}" else "Tap Configs tab to select configuration",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
+        // 3. CONNECTION STATUS & LARGE CONNECT POWER BUTTON
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(22.dp)),
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
+                    .padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val tertiaryColor = MaterialTheme.colorScheme.tertiary
-                val primaryColor = MaterialTheme.colorScheme.primary
+                Text(
+                    text = statusMessage,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isConnected) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurface,
+                    letterSpacing = 1.5.sp
+                )
 
+                Divider(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                )
+
+                Text(
+                    text = "Total Usage: ${formatBytes(totalBytesRx + totalBytesTx)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // LARGE CIRCULAR CONNECT BUTTON WITH ANIMATED NEON RING
                 Box(
                     modifier = Modifier
-                        .size(138.dp)
+                        .size(148.dp)
                         .clickable { onToggleConnection() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -251,258 +242,88 @@ fun HomeScreen(
                             drawArc(
                                 color = accentColor,
                                 startAngle = 0f,
-                                sweepAngle = 110f,
+                                sweepAngle = 120f,
                                 useCenter = false,
                                 style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
                             )
                             drawArc(
-                                color = accentColor.copy(alpha = 0.5f),
+                                color = accentColor.copy(alpha = 0.4f),
                                 startAngle = 180f,
-                                sweepAngle = 110f,
+                                sweepAngle = 120f,
                                 useCenter = false,
                                 style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                        rotate(innerAngle) {
-                            drawArc(
-                                color = tertiaryColor,
-                                startAngle = 45f,
-                                sweepAngle = 90f,
-                                useCenter = false,
-                                topLeft = androidx.compose.ui.geometry.Offset(16.dp.toPx(), 16.dp.toPx()),
-                                size = androidx.compose.ui.geometry.Size(
-                                    size.width - 32.dp.toPx(),
-                                    size.height - 32.dp.toPx()
-                                ),
-                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = primaryColor,
-                                startAngle = 225f,
-                                sweepAngle = 90f,
-                                useCenter = false,
-                                topLeft = androidx.compose.ui.geometry.Offset(16.dp.toPx(), 16.dp.toPx()),
-                                size = androidx.compose.ui.geometry.Size(
-                                    size.width - 32.dp.toPx(),
-                                    size.height - 32.dp.toPx()
-                                ),
-                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
                             )
                         }
                     }
 
                     Box(
                         modifier = Modifier
-                            .size(80.dp)
+                            .size(112.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.radialGradient(
                                     colors = listOf(
-                                        accentColor.copy(alpha = 0.35f),
-                                        Color.Transparent
+                                        MaterialTheme.colorScheme.primaryContainer,
+                                        MaterialTheme.colorScheme.surface
                                     )
                                 )
-                            ),
+                            )
+                            .border(2.dp, accentColor, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (isConnected) Icons.Default.Lock else Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = accentColor,
-                            modifier = Modifier.size(40.dp)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = if (isConnected) Icons.Default.PowerSettingsNew else Icons.Default.PowerSettingsNew,
+                                contentDescription = "Connect",
+                                tint = if (isConnected) Color(0xFF00E676) else accentColor,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isConnected) "DISCONNECT" else "CONNECT",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isConnected) Color(0xFF00E676) else accentColor
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                Text(
-                    text = formattedTimer,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                Text(
-                    text = if (isConnected) "TUNNEL STREAM ACTIVE • CONNECTED" else "SYSTEM STANDBY • READY",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = accentColor,
-                    letterSpacing = 1.3.sp
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // PING BUTTON DIRECTLY BENEATH STATUS (ENABLED ONLY WHEN CONNECTED)
-                Button(
-                    onClick = onPingClick,
-                    enabled = isConnected && !isPinging,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = "Ping Tunnel",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isConnected) {
-                            if (isPinging) "Pinging Connected Server..." else pingResultText
-                        } else {
-                            "PING LATENCY & SPEED (CONNECT VPN FIRST)"
-                        },
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
+                // UPLINK / DOWNLINK STATS ROW
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(vertical = 10.dp, horizontal = 16.dp),
+                        .padding(vertical = 12.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowDownward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Text("DOWNLOAD", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                rxSpeedText,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ArrowUpward, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Uplink", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(txSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(formatBytes(totalBytesTx), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Divider(
-                        modifier = Modifier
-                            .height(32.dp)
-                            .width(1.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowUpward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Text("UPLOAD", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                txSpeedText,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+
+                    Divider(modifier = Modifier.height(36.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ArrowDownward, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Downlink", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(rxSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(formatBytes(totalBytesRx), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            }
-        }
-
-        // 3. TELEMETRY & ENGINE STATS GRID
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            TelemetryStatCard(
-                title = "PROTOCOL ENGINE",
-                value = protocolEngineDisplay,
-                icon = Icons.Default.Bolt,
-                accent = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f)
-            )
-            TelemetryStatCard(
-                title = "SECURITY LAYER",
-                value = securityLayerDisplay,
-                icon = Icons.Default.Security,
-                accent = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            TelemetryStatCard(
-                title = "TUNNEL STREAM",
-                value = "OPTIMIZED",
-                icon = Icons.Default.RocketLaunch,
-                accent = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.weight(1f)
-            )
-            TelemetryStatCard(
-                title = "PRIMARY DNS",
-                value = customDns1,
-                icon = Icons.Default.Dns,
-                accent = Color(0xFFFF9800),
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        // 4. DEVICE HARDWARE ID BADGE
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Fingerprint,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Hardware Device ID (HWID)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = deviceId,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-                Text(
-                    text = "v2.0",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }
@@ -510,48 +331,18 @@ fun HomeScreen(
 
 private fun formatRate(bytesPerSec: Long): String {
     return when {
-        bytesPerSec >= 1_048_576L -> "%.2f MB/s".format(bytesPerSec / 1_048_576.0)
+        bytesPerSec >= 1_048_576L -> "%.1f MB/s".format(bytesPerSec / 1_048_576.0)
         bytesPerSec >= 1024L -> "%.1f KB/s".format(bytesPerSec / 1024.0)
         else -> "$bytesPerSec B/s"
     }
 }
 
-@Composable
-private fun TelemetryStatCard(
-    title: String,
-    value: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    accent: Color,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
+private fun formatBytes(bytes: Long): String {
+    return when {
+        bytes >= 1_073_741_824L -> "%.2f GB".format(bytes / 1_073_741_824.0)
+        bytes >= 1_048_576L -> "%.2f MB".format(bytes / 1_048_576.0)
+        bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
+        else -> "$bytes B"
     }
 }
 // === END OF FILE 12 ===
