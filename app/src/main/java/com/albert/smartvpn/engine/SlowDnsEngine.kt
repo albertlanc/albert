@@ -18,7 +18,6 @@ import kotlin.concurrent.thread
 
 object SlowDnsEngine {
     private const val TAG = "SlowDnsEngine"
-    private const val BOOST_INSTANCES = 4
     private const val BASE_WORKER_PORT = 7001
 
     private val workerProcesses = CopyOnWriteArrayList<Process>()
@@ -50,11 +49,12 @@ object SlowDnsEngine {
         dnsPort: Int = 53,
         nsDomain: String,
         pubKey: String,
+        dnsttMode: String = "UDP",
         localPort: Int = 7000
     ): Boolean {
         stopSlowDns()
 
-        val rawInput = dnsServerIp.trim().ifEmpty { "8.8.8.8" }
+        val rawInput = dnsServerIp.trim().ifEmpty { "8.8.8.8:53" }
         val rawDnsHost = rawInput.substringBefore(":")
         val customInlinePort = rawInput.substringAfter(":", "").toIntOrNull()
         val effectivePort = customInlinePort ?: if (dnsPort in 1..65535) dnsPort else 53
@@ -63,14 +63,14 @@ object SlowDnsEngine {
         val cleanPubKey = normalizePubKeyToHex(pubKey)
 
         if (cleanNs.isEmpty() || cleanPubKey.length != 64) {
-            VpnStateBridge.addLog("Connection failed: Invalid SlowDNS configuration.")
+            VpnStateBridge.addLog("Connection failed: Invalid SlowDNS/DNSTT public key or nameserver.")
             return false
         }
 
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val dnsttBin = File(nativeDir, "libdnstt.so")
         if (!dnsttBin.exists()) {
-            VpnStateBridge.addLog("Connection failed: SlowDNS engine unavailable.")
+            VpnStateBridge.addLog("Connection failed: DNSTT engine unavailable.")
             return false
         }
         dnsttBin.setExecutable(true)
@@ -81,28 +81,34 @@ object SlowDnsEngine {
             rawDnsHost
         }
 
-        // Automatically turn ON SlowDNS Boost when a SlowDNS profile connects
         VpnStateBridge.slowDnsBoostEnabled.value = true
+        val workerCount = if (VpnStateBridge.turboSpeedEnabled.value) 4 else 2
 
         return try {
             isRunning = true
-            VpnStateBridge.updateState("CONNECTING", "Connecting...")
-            VpnStateBridge.addLog("Connecting...")
+            VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
+            VpnStateBridge.addLog("Connecting DNSTT ($dnsttMode)...")
 
             val activeWorkerPorts = CopyOnWriteArrayList<Int>()
             val resolverAddr = "$primaryDnsIp:$effectivePort"
+            val modeUpper = dnsttMode.uppercase()
 
-            for (idx in 0 until BOOST_INSTANCES) {
+            for (idx in 0 until workerCount) {
                 val workerPort = BASE_WORKER_PORT + idx
                 val workerListen = "127.0.0.1:$workerPort"
 
                 val cmd = when {
-                    rawInput.startsWith("https://", true) ->
-                        listOf(dnsttBin.absolutePath, "-doh", rawInput, "-pubkey", cleanPubKey, cleanNs, workerListen)
-                    rawInput.startsWith("tls://", true) ->
-                        listOf(dnsttBin.absolutePath, "-dot", rawInput.removePrefix("tls://"), "-pubkey", cleanPubKey, cleanNs, workerListen)
-                    else ->
+                    modeUpper == "DOH" || rawInput.startsWith("https://", true) -> {
+                        val dohUrl = if (rawInput.startsWith("https://", true)) rawInput else "https://$rawDnsHost/dns-query"
+                        listOf(dnsttBin.absolutePath, "-doh", dohUrl, "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    }
+                    modeUpper == "DOT" || rawInput.startsWith("tls://", true) -> {
+                        val dotAddr = rawInput.removePrefix("tls://").let { if (it.contains(":")) it else "$it:853" }
+                        listOf(dnsttBin.absolutePath, "-dot", dotAddr, "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    }
+                    else -> {
                         listOf(dnsttBin.absolutePath, "-udp", resolverAddr, "-pubkey", cleanPubKey, cleanNs, workerListen)
+                    }
                 }
 
                 val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
@@ -142,7 +148,7 @@ object SlowDnsEngine {
             val aliveCount = workerProcesses.count { it.isAlive }
             if (aliveCount > 0) {
                 VpnStateBridge.addLog("HTTP/1.1 200 OK")
-                VpnStateBridge.addLog("Switching Protocols...")
+                VpnStateBridge.addLog("DNSTT Tunnel Active")
                 true
             } else {
                 VpnStateBridge.addLog("Connection failed.")
@@ -211,7 +217,6 @@ object SlowDnsEngine {
 
     fun stopSlowDns() {
         isRunning = false
-        // Automatically turn OFF SlowDNS Boost when stopped
         VpnStateBridge.slowDnsBoostEnabled.value = false
         try { balancerServer?.close() } catch (_: Throwable) {}
         balancerServer = null
@@ -228,4 +233,4 @@ object SlowDnsEngine {
         }
     }
 }
-// === END OF FILE 7 ===
+// === END OF FILE 8 ===
