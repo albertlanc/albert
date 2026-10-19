@@ -119,6 +119,8 @@ class MainActivity : ComponentActivity() {
         val pagerState = rememberPagerState(initialPage = 0, pageCount = { 4 })
         var showThemeMenu by remember { mutableStateOf(false) }
         var showUserManual by remember { mutableStateOf(false) }
+        var showQuickImportMenu by remember { mutableStateOf(false) }
+        var showCloudImportModal by remember { mutableStateOf(false) }
 
         val isConnected by viewModel.isConnected.collectAsState()
         val connectionState by viewModel.connectionState.collectAsState()
@@ -164,8 +166,8 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("SMARTV2.5", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
-                                Text("VPN TUNNEL • v2.5.1 - PRO", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
+                                Text("SMART v3", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
+                                Text("VPN TUNNEL • v3.0.0 - PRO", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                             }
                         }
 
@@ -279,7 +281,7 @@ class MainActivity : ComponentActivity() {
                     TopAppBar(
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Smartv2.5", fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = 0.5.sp)
+                                Text("Smart v3", fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = 0.5.sp)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
@@ -304,8 +306,8 @@ class MainActivity : ComponentActivity() {
                             IconButton(onClick = { showUserManual = true }) {
                                 Icon(Icons.Default.MenuBook, "User Manual", tint = MaterialTheme.colorScheme.primary)
                             }
-                            IconButton(onClick = { scope.launch { pagerState.animateScrollToPage(1) } }) {
-                                Icon(Icons.Default.AddBox, "Add Config", tint = MaterialTheme.colorScheme.primary)
+                            IconButton(onClick = { showQuickImportMenu = true }) {
+                                Icon(Icons.Default.Add, "Add Config Menu", tint = MaterialTheme.colorScheme.primary)
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -348,6 +350,79 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // QUICK IMPORT / CONFIG MENU DROPDOWN (Matches video at 00:05)[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)
+        if (showQuickImportMenu) {
+            AlertDialog(
+                onDismissRequest = { showQuickImportMenu = false },
+                title = { Text("Configuration Options") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = {
+                                showQuickImportMenu = false
+                                clipboardManager.getText()?.text?.let { viewModel.importFromClipboard(it) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Import from Clipboard", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+                        }
+                        TextButton(
+                            onClick = {
+                                showQuickImportMenu = false
+                                showCloudImportModal = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Import from Cloud", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+                        }
+                        TextButton(
+                            onClick = {
+                                showQuickImportMenu = false
+                                scope.launch { pagerState.animateScrollToPage(1) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Manual Configuration", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showQuickImportMenu = false }) { Text("Cancel") } }
+            )
+        }
+
+        if (showCloudImportModal) {
+            var cloudUrl by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { showCloudImportModal = false },
+                title = { Text("Import from Cloud") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Paste the cloud URL (e.g., https://paste.rs/xyz)", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = cloudUrl,
+                            onValueChange = { cloudUrl = it },
+                            label = { Text("URL") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        if (cloudUrl.isNotBlank()) {
+                            viewModel.importFromCloudUrl(cloudUrl)
+                            showCloudImportModal = false
+                        }
+                    }) {
+                        Text("Import")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCloudImportModal = false }) { Text("Cancel") }
+                }
+            )
+        }
+
         if (showThemeMenu) {
             AlertDialog(
                 onDismissRequest = { showThemeMenu = false },
@@ -376,7 +451,7 @@ class MainActivity : ComponentActivity() {
         if (showUserManual) {
             AlertDialog(
                 onDismissRequest = { showUserManual = false },
-                title = { Text("Smartv2.5 VPN User Manual") },
+                title = { Text("Smart v3 VPN User Manual") },
                 text = {
                     Column(
                         modifier = Modifier
@@ -424,9 +499,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Spacer(modifier = Modifier.height(20.dp))
-                Text("SMARTV2.5", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
+                Text("SMART v3", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 2.sp)
                 Spacer(modifier = Modifier.height(6.dp))
-                Text("PRO VPN TUNNEL • v2.5.1", fontSize = 12.sp, color = Color(0xFF00E5FF), textAlign = TextAlign.Center)
+                Text("PRO VPN TUNNEL • v3.0.0", fontSize = 12.sp, color = Color(0xFF00E5FF), textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(onClick = onEnterNow, shape = RoundedCornerShape(12.dp)) {
                     Text("Enter Dashboard →", fontWeight = FontWeight.Bold)
@@ -463,10 +538,10 @@ class MainActivity : ComponentActivity() {
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Smartv2.5 PRO VPN")
-                putExtra(Intent.EXTRA_TEXT, "Download Smartv2.5 PRO — Advanced Multi-Protocol Stealth Tunnel (SSH, VLESS, VMess, Trojan, ShadowSocks, WireGuard, OpenVPN, Hysteria2 & SlowDNS).")
+                putExtra(Intent.EXTRA_SUBJECT, "Smart v3 PRO VPN")
+                putExtra(Intent.EXTRA_TEXT, "Download Smart v3 PRO — Advanced Multi-Protocol Stealth Tunnel (SSH, VLESS, VMess, Trojan, ShadowSocks, WireGuard, OpenVPN, Hysteria2 & SlowDNS).")
             }
-            startActivity(Intent.createChooser(sendIntent, "Share Smartv2.5"))
+            startActivity(Intent.createChooser(sendIntent, "Share Smart v3"))
         } catch (_: Throwable) {}
     }
 }
