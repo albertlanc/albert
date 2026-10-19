@@ -8,6 +8,22 @@ import java.net.URLDecoder
 
 object VpnConfigParser {
 
+    private fun detectFlag(host: String, name: String): String {
+        val combined = "$host $name".lowercase()
+        return when {
+            combined.contains("uk") || combined.contains(".co.uk") || combined.contains("london") -> "🇬🇧"
+            combined.contains("nl") || combined.contains("amsterdam") || combined.contains("nether") -> "🇳🇱"
+            combined.contains("us") || combined.contains("usa") || combined.contains("new york") -> "🇺🇸"
+            combined.contains("de") || combined.contains("frankfurt") || combined.contains("german") -> "🇩🇪"
+            combined.contains("fr") || combined.contains("paris") -> "🇫🇷"
+            combined.contains("sg") || combined.contains("singapore") -> "🇸🇬"
+            combined.contains("ng") || combined.contains("nigeria") || combined.contains("lagos") -> "🇳🇬"
+            combined.contains("za") || combined.contains("south africa") -> "🇿🇦"
+            combined.contains("ca") || combined.contains("canada") -> "🇨🇦"
+            else -> "🇳🇱"
+        }
+    }
+
     fun parseUri(rawUri: String): VpnProfile? {
         val text = rawUri.trim()
         if (text.isEmpty()) return null
@@ -17,6 +33,7 @@ object VpnConfigParser {
                 text.startsWith("vless://", ignoreCase = true) -> parseVlessOrTrojan(text, "VLESS")
                 text.startsWith("trojan://", ignoreCase = true) -> parseVlessOrTrojan(text, "TROJAN")
                 text.startsWith("vmess://", ignoreCase = true) -> parseVmess(text)
+                text.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(text)
                 text.startsWith("hy2://", ignoreCase = true) ||
                     text.startsWith("hysteria2://", ignoreCase = true) -> parseHysteria2(text)
                 text.startsWith("slowdns://", ignoreCase = true) -> parseSlowDnsUri(text)
@@ -36,7 +53,7 @@ object VpnConfigParser {
         val host = uri.host?.trim() ?: return null
         val port = if (uri.port > 0) uri.port else 443
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "$protocol-$host"
+            ?: "Imported $protocol"
 
         val securityParam = uri.getQueryParameter("security")?.lowercase()
             ?: if (port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)) "none" else "tls"
@@ -44,12 +61,14 @@ object VpnConfigParser {
         val sniParam = uri.getQueryParameter("sni")
             ?: uri.getQueryParameter("host")
             ?: host
+        val wsHostParam = uri.getQueryParameter("host") ?: sniParam
         val pathParam = uri.getQueryParameter("path")
             ?: uri.getQueryParameter("serviceName")
             ?: "/"
         val pbkParam = uri.getQueryParameter("pbk") ?: ""
         val sidParam = uri.getQueryParameter("sid") ?: ""
         val flowParam = uri.getQueryParameter("flow") ?: ""
+        val alpnParam = uri.getQueryParameter("alpn") ?: "h2, http/1.1"
 
         return VpnProfile(
             name = remark,
@@ -60,10 +79,13 @@ object VpnConfigParser {
             network = networkParam,
             security = securityParam,
             sni = sniParam,
+            wsHost = wsHostParam,
+            alpn = alpnParam,
             pbk = pbkParam,
             sid = sidParam,
             flow = flowParam,
             path = pathParam,
+            countryFlag = detectFlag(host, remark),
             isSelected = true
         )
     }
@@ -77,13 +99,14 @@ object VpnConfigParser {
         val host = obj.get("add")?.asString?.trim() ?: return null
         val port = obj.get("port")?.asString?.toIntOrNull() ?: 443
         val uuid = obj.get("id")?.asString?.trim() ?: return null
-        val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "VMESS-$host"
+        val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "Imported VMESS"
         val net = obj.get("net")?.asString?.lowercase() ?: "ws"
         val tlsField = obj.get("tls")?.asString?.lowercase() ?: ""
         val security = if (tlsField == "tls" || (port == 443 && tlsField != "none")) "tls" else "none"
         val sni = obj.get("sni")?.asString?.takeIf { it.isNotBlank() }
             ?: obj.get("host")?.asString?.takeIf { it.isNotBlank() }
             ?: host
+        val wsHost = obj.get("host")?.asString?.takeIf { it.isNotBlank() } ?: sni
         val path = obj.get("path")?.asString?.takeIf { it.isNotBlank() } ?: "/"
 
         return VpnProfile(
@@ -95,7 +118,42 @@ object VpnConfigParser {
             network = net,
             security = security,
             sni = sni,
+            wsHost = wsHost,
             path = path,
+            countryFlag = detectFlag(host, name),
+            isSelected = true
+        )
+    }
+
+    private fun parseShadowsocks(uriString: String): VpnProfile? {
+        val raw = uriString.removePrefix("ss://").removePrefix("SS://")
+        val remark = if (raw.contains("#")) URLDecoder.decode(raw.substringAfter("#"), "UTF-8") else "Imported SHADOWSOCKS"
+        val mainPart = raw.substringBefore("#")
+        val decoded = if (!mainPart.contains("@")) {
+            String(Base64.decode(mainPart, Base64.DEFAULT), Charsets.UTF_8)
+        } else {
+            val userB64 = mainPart.substringBefore("@")
+            val hostPart = mainPart.substringAfter("@")
+            val userDecoded = try {
+                String(Base64.decode(userB64, Base64.DEFAULT), Charsets.UTF_8)
+            } catch (_: Throwable) { userB64 }
+            "$userDecoded@$hostPart"
+        }
+        val creds = decoded.substringBeforeLast("@")
+        val hostPort = decoded.substringAfterLast("@")
+        val method = creds.substringBefore(":").ifBlank { "aes-256-gcm" }
+        val password = creds.substringAfter(":")
+        val host = hostPort.substringBeforeLast(":")
+        val port = hostPort.substringAfterLast(":").toIntOrNull() ?: 8388
+
+        return VpnProfile(
+            name = remark,
+            protocol = "SHADOWSOCKS",
+            server = host,
+            port = port,
+            uuid = password,
+            ssMethod = method,
+            countryFlag = detectFlag(host, remark),
             isSelected = true
         )
     }
@@ -111,13 +169,15 @@ object VpnConfigParser {
         val host = uri.host?.trim() ?: return null
         val port = if (uri.port > 0) uri.port else 443
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "Hysteria2-$host"
+            ?: "Imported HYSTERIA2"
 
         val sni = uri.getQueryParameter("sni")
             ?: uri.getQueryParameter("peer")
             ?: host
         val obfs = uri.getQueryParameter("obfs") ?: ""
         val obfsPassword = uri.getQueryParameter("obfs-password") ?: ""
+        val mport = uri.getQueryParameter("mport") ?: ""
+        val pinSha256 = uri.getQueryParameter("pinSHA256") ?: ""
         val upMbps = uri.getQueryParameter("upmbps")?.toIntOrNull() ?: 50
         val downMbps = uri.getQueryParameter("downmbps")?.toIntOrNull() ?: 100
 
@@ -133,8 +193,11 @@ object VpnConfigParser {
             hy2Password = password,
             hy2Obfs = obfs,
             hy2ObfsPassword = obfsPassword,
+            hy2PortHopping = mport,
+            pinSha256 = pinSha256,
             hy2UpMbps = upMbps,
             hy2DownMbps = downMbps,
+            countryFlag = detectFlag(host, remark),
             isSelected = true
         )
     }
@@ -142,18 +205,18 @@ object VpnConfigParser {
     private fun parseSlowDnsUri(uriString: String): VpnProfile? {
         val uri = Uri.parse(uriString)
         val nsDomain = uri.host?.trim() ?: return null
-        val port = if (uri.port > 0) uri.port else 53
+        val port = if (uri.port > 0) uri.port else 22
         val userInfo = uri.userInfo ?: ""
         val sshUser = userInfo.substringBefore(":")
         val sshPass = userInfo.substringAfter(":", "")
-        val dnsIp = uri.getQueryParameter("dns") ?: "8.8.8.8"
+        val dnsIp = uri.getQueryParameter("dns") ?: "8.8.8.8:53"
         val pubKey = uri.getQueryParameter("pubkey") ?: ""
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "SlowDNS-$nsDomain"
+            ?: "Imported SSH-DNSTT"
 
         return VpnProfile(
             name = remark,
-            protocol = "SLOWDNS",
+            protocol = "SSH-DNSTT",
             server = nsDomain,
             port = port,
             uuid = sshUser,
@@ -165,6 +228,7 @@ object VpnConfigParser {
             slowDnsPubKey = pubKey,
             slowDnsServerIp = dnsIp,
             pbk = pubKey,
+            countryFlag = detectFlag(nsDomain, remark),
             isSelected = true
         )
     }
@@ -179,13 +243,13 @@ object VpnConfigParser {
         val sni = uri.getQueryParameter("sni") ?: ""
         val payload = uri.getQueryParameter("payload")?.let { URLDecoder.decode(it, "UTF-8") } ?: ""
         val mode = when {
-            payload.isNotBlank() && sni.isNotBlank() -> "SSH+WS+SNI+PAYLOAD"
-            payload.isNotBlank() -> "SSH+PAYLOAD"
-            sni.isNotBlank() -> "SSH+SSL"
-            else -> "SSH"
+            payload.isNotBlank() && sni.isNotBlank() -> "SSH-TLS-PAYLOAD"
+            payload.isNotBlank() -> "SSH-PAYLOAD"
+            sni.isNotBlank() -> "SSH-TLS"
+            else -> "SSH-DIRECT"
         }
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "$mode-$host"
+            ?: "Imported $mode"
 
         return VpnProfile(
             name = remark,
@@ -197,7 +261,8 @@ object VpnConfigParser {
             sshPass = sshPass,
             sni = sni,
             payload = payload,
-            security = if (port == 443 || mode == "SSH+SSL") "tls" else "none",
+            security = if (port == 443 || mode.contains("TLS")) "tls" else "none",
+            countryFlag = detectFlag(host, remark),
             isSelected = true
         )
     }
@@ -205,6 +270,7 @@ object VpnConfigParser {
     private fun parseWireGuardConf(confText: String): VpnProfile? {
         var privateKey = ""
         var address = "10.0.0.2/32"
+        var allowedIps = "0.0.0.0/0, ::/0"
         var mtu = 1420
         var publicKey = ""
         var presharedKey = ""
@@ -219,6 +285,7 @@ object VpnConfigParser {
                 when (key) {
                     "privatekey" -> privateKey = value
                     "address" -> address = value.substringBefore(",").trim()
+                    "allowedips" -> allowedIps = value
                     "mtu" -> mtu = value.toIntOrNull() ?: 1420
                     "publickey" -> publicKey = value
                     "presharedkey" -> presharedKey = value
@@ -233,7 +300,7 @@ object VpnConfigParser {
         if (endpointHost.isEmpty() || privateKey.isEmpty() || publicKey.isEmpty()) return null
 
         return VpnProfile(
-            name = "WireGuard-$endpointHost",
+            name = "Imported WIREGUARD",
             protocol = "WIREGUARD",
             server = endpointHost,
             port = endpointPort,
@@ -244,9 +311,11 @@ object VpnConfigParser {
             wgPublicKey = publicKey,
             wgPresharedKey = presharedKey,
             wgAddress = address,
+            wgAllowedIps = allowedIps,
             wgMtu = mtu,
+            countryFlag = detectFlag(endpointHost, "WireGuard"),
             isSelected = true
         )
     }
 }
-// === END OF FILE 4 ===
+// === END OF FILE 5 ===
