@@ -1,6 +1,7 @@
 package com.albert.smartvpn.engine
 
 import android.os.Build
+import android.util.Base64
 import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import net.schmizz.sshj.DefaultConfig
@@ -47,9 +48,11 @@ object SshEngine {
     private var localServer: ServerSocket? = null
     private val activeBridges = CopyOnWriteArrayList<ServerSocket>()
     private val activeUdpSockets = CopyOnWriteArrayList<DatagramSocket>()
-    // Bounded thread pool prevents thread-explosion, CPU overheating, and phone hangs
     private val ioThreadPool = Executors.newFixedThreadPool(24)
     private val tlsPorts = setOf(443, 8443, 2053, 2083, 2087, 2096)
+
+    private fun socketBufSize(): Int =
+        if (VpnStateBridge.turboSpeedEnabled.value) 524288 else 262144
 
     private fun buildAndroidSafeSshConfig(isSlowDns: Boolean): DefaultConfig {
         try {
@@ -101,15 +104,22 @@ object SshEngine {
         return config
     }
 
-    private fun createTrustAllSslFactory(): javax.net.ssl.SSLSocketFactory {
+    private fun createTrustAllSslFactory(tlsVersion: String): javax.net.ssl.SSLSocketFactory {
         val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(c: Array<out X509Certificate>?, a: String?) {}
             override fun checkServerTrusted(c: Array<out X509Certificate>?, a: String?) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
-        return SSLContext.getInstance("TLS").apply {
-            init(null, trustAll, SecureRandom())
-        }.socketFactory
+        val proto = when (tlsVersion.uppercase()) {
+            "TLSV1.3" -> "TLSv1.3"
+            "TLSV1.2" -> "TLSv1.2"
+            else -> "TLS"
+        }
+        return try {
+            SSLContext.getInstance(proto).apply { init(null, trustAll, SecureRandom()) }.socketFactory
+        } catch (_: Throwable) {
+            SSLContext.getInstance("TLS").apply { init(null, trustAll, SecureRandom()) }.socketFactory
+        }
     }
 
     private fun createConnectedSshClient(
@@ -122,11 +132,15 @@ object SshEngine {
         sni: String,
         proxyHost: String,
         proxyPort: Int,
+        proxyAuth: Boolean,
+        proxyUser: String,
+        proxyPass: String,
+        tlsVersion: String,
         isSlowDns: Boolean,
         emitUiLogs: Boolean
     ): SSHClient? {
         val sshConfig = buildAndroidSafeSshConfig(isSlowDns)
-        val useCustomFactory = !isSlowDns && mode != "SSH"
+        val isPlainDirect = isSlowDns || mode == "SSH" || mode == "SSH-DIRECT"
 
         val client = SSHClient(sshConfig).apply {
             addHostKeyVerifier(PromiscuousVerifier())
@@ -135,18 +149,29 @@ object SshEngine {
             if (VpnStateBridge.sshCompression.value) {
                 try { useCompression() } catch (_: Throwable) {}
             }
-            connection.windowSize = 8388608L // 8 MB Fast Window (cool on CPU)
+            connection.windowSize = if (VpnStateBridge.turboSpeedEnabled.value) 8388608L else 4194304L
             connection.maxPacketSize = 32768
             connection.keepAlive.keepAliveInterval = VpnStateBridge.pingIntervalSec.value.coerceIn(10, 120)
 
-            if (useCustomFactory) {
+            if (!isPlainDirect) {
                 socketFactory = createCustomTunnelSocketFactory(
-                    mode, cleanHost, port, payloadTemplate, sni.trim(), proxyHost.trim(), proxyPort, emitUiLogs
+                    mode = mode,
+                    targetHost = cleanHost,
+                    targetPort = port,
+                    payloadTemplate = payloadTemplate,
+                    sni = sni.trim(),
+                    proxyHost = proxyHost.trim(),
+                    proxyPort = proxyPort,
+                    proxyAuth = proxyAuth,
+                    proxyUser = proxyUser,
+                    proxyPass = proxyPass,
+                    tlsVersion = tlsVersion,
+                    emitUiLogs = emitUiLogs
                 )
             }
         }
 
-        if (useCustomFactory) client.connect("127.0.0.1", port) else client.connect(cleanHost, port)
+        if (!isPlainDirect) client.connect("127.0.0.1", port) else client.connect(cleanHost, port)
         client.authPassword(cleanUser, pass)
         return if (client.isAuthenticated) client else null
     }
@@ -162,6 +187,10 @@ object SshEngine {
         sni: String = "",
         proxyHost: String = "",
         proxyPort: Int = 8080,
+        proxyAuth: Boolean = false,
+        proxyUser: String = "",
+        proxyPass: String = "",
+        tlsVersion: String = "DEFAULT",
         isSlowDns: Boolean = false
     ): Boolean {
         if (isRunning) stopSshTunnel()
@@ -171,16 +200,30 @@ object SshEngine {
         val mode = protocolMode.uppercase()
 
         if (cleanHost.isEmpty() || cleanUser.isEmpty() || pass.isEmpty()) {
-            VpnStateBridge.addLog("Connection failed: Missing configuration details.")
+            VpnStateBridge.addLog("Connection failed: Missing SSH host, username, or password.")
             return false
         }
 
         return try {
-            VpnStateBridge.updateState("CONNECTING", "Connecting...")
-            VpnStateBridge.addLog("Connecting...")
+            VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
+            VpnStateBridge.addLog("Connecting ($mode)...")
 
             val primaryClient = createConnectedSshClient(
-                mode, cleanHost, port, cleanUser, pass, payloadTemplate, sni, proxyHost, proxyPort, isSlowDns, true
+                mode = mode,
+                cleanHost = cleanHost,
+                port = port,
+                cleanUser = cleanUser,
+                pass = pass,
+                payloadTemplate = payloadTemplate,
+                sni = sni,
+                proxyHost = proxyHost,
+                proxyPort = proxyPort,
+                proxyAuth = proxyAuth,
+                proxyUser = proxyUser,
+                proxyPass = proxyPass,
+                tlsVersion = tlsVersion,
+                isSlowDns = isSlowDns,
+                emitUiLogs = true
             )
 
             if (primaryClient != null) {
@@ -188,15 +231,30 @@ object SshEngine {
                 isRunning = true
                 startLocalSocks5Server("127.0.0.1", localPort)
 
-                // Add 1 standby multiplexed session for fast parallel streams without heating the CPU
-                ioThreadPool.execute {
-                    try {
-                        if (!isRunning) return@execute
-                        val secondary = createConnectedSshClient(
-                            mode, cleanHost, port, cleanUser, pass, payloadTemplate, sni, proxyHost, proxyPort, isSlowDns, false
-                        )
-                        if (secondary != null && isRunning) sshPool.add(secondary) else secondary?.close()
-                    } catch (_: Throwable) {}
+                if (VpnStateBridge.turboSpeedEnabled.value) {
+                    ioThreadPool.execute {
+                        try {
+                            if (!isRunning) return@execute
+                            val secondary = createConnectedSshClient(
+                                mode = mode,
+                                cleanHost = cleanHost,
+                                port = port,
+                                cleanUser = cleanUser,
+                                pass = pass,
+                                payloadTemplate = payloadTemplate,
+                                sni = sni,
+                                proxyHost = proxyHost,
+                                proxyPort = proxyPort,
+                                proxyAuth = proxyAuth,
+                                proxyUser = proxyUser,
+                                proxyPass = proxyPass,
+                                tlsVersion = tlsVersion,
+                                isSlowDns = isSlowDns,
+                                emitUiLogs = false
+                            )
+                            if (secondary != null && isRunning) sshPool.add(secondary) else secondary?.close()
+                        } catch (_: Throwable) {}
+                    }
                 }
                 true
             } else {
@@ -228,6 +286,10 @@ object SshEngine {
         sni: String,
         proxyHost: String,
         proxyPort: Int,
+        proxyAuth: Boolean,
+        proxyUser: String,
+        proxyPass: String,
+        tlsVersion: String,
         emitUiLogs: Boolean
     ): SocketFactory {
         return object : SocketFactory() {
@@ -239,13 +301,13 @@ object SshEngine {
 
             private fun openSslSocket(tcpHost: String, tcpPort: Int, sniHost: String, forceHttp1: Boolean): SSLSocket {
                 val raw = Socket().apply {
-                    tcpNoDelay = true
+                    tcpNoDelay = VpnStateBridge.tcpNoDelay.value
                     keepAlive = true
-                    sendBufferSize = 262144
-                    receiveBufferSize = 262144
+                    sendBufferSize = socketBufSize()
+                    receiveBufferSize = socketBufSize()
                     connect(InetSocketAddress(tcpHost, tcpPort), 15000)
                 }
-                return (createTrustAllSslFactory().createSocket(raw, sniHost, tcpPort, true) as SSLSocket).apply {
+                return (createTrustAllSslFactory(tlsVersion).createSocket(raw, sniHost, tcpPort, true) as SSLSocket).apply {
                     val p = sslParameters
                     p.serverNames = listOf(SNIHostName(sniHost))
                     if (forceHttp1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -257,12 +319,15 @@ object SshEngine {
             }
 
             private fun openTunneledSocket(): Socket {
-                val useProxy = mode == "SSH+PAYLOAD" && proxyHost.isNotEmpty()
-                val tcpHost = if (useProxy) proxyHost else targetHost
-                val tcpPort = if (useProxy) proxyPort else targetPort
+                val hasProxy = (mode.contains("PROXY") || mode == "SSH+PAYLOAD") && proxyHost.isNotEmpty()
+                val hasTls = mode.contains("TLS") || mode == "SSH+SSL" || mode == "SSH+WS+SNI+PAYLOAD"
+                val hasPayload = mode.contains("PAYLOAD")
+
+                val tcpHost = if (hasProxy) proxyHost else targetHost
+                val tcpPort = if (hasProxy) proxyPort else targetPort
                 val sniHost = sni.ifEmpty { targetHost }
 
-                if (mode == "SSH+SSL") {
+                if ((mode == "SSH-TLS" || mode == "SSH+SSL") && !hasPayload && !hasProxy) {
                     val sslSock = openSslSocket(tcpHost, tcpPort, sniHost, false)
                     val pushbackIn = PushbackInputStream(sslSock.getInputStream(), 32768)
                     val prevTimeout = sslSock.soTimeout
@@ -307,35 +372,36 @@ object SshEngine {
                     }
                 }
 
-                val shouldUseTls = when (mode) {
-                    "SSH+WS+SNI+PAYLOAD" -> (targetPort in tlsPorts) || (targetPort != 80 && targetPort != 8080 && sni.isNotEmpty())
-                    "SSH+PAYLOAD" -> (tcpPort in tlsPorts) || (targetPort in tlsPorts)
-                    else -> false
-                }
-
+                val shouldUseTls = hasTls || (targetPort in tlsPorts)
                 val activeSocket: Socket = if (shouldUseTls) {
                     openSslSocket(tcpHost, tcpPort, sniHost, payloadTemplate.isNotBlank())
                 } else {
                     Socket().apply {
-                        tcpNoDelay = true
+                        tcpNoDelay = VpnStateBridge.tcpNoDelay.value
                         keepAlive = true
-                        sendBufferSize = 262144
-                        receiveBufferSize = 262144
+                        sendBufferSize = socketBufSize()
+                        receiveBufferSize = socketBufSize()
                         connect(InetSocketAddress(tcpHost, tcpPort), 15000)
                     }
                 }
 
                 val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 32768)
 
-                if (payloadTemplate.isNotBlank()) {
-                    val norm = if (mode == "SSH+WS+SNI+PAYLOAD") {
-                        payloadTemplate.replace("Host: [sni]", "Host: [host]", true)
-                    } else {
-                        payloadTemplate
+                val effectivePayload = when {
+                    payloadTemplate.isNotBlank() -> payloadTemplate
+                    hasProxy -> "CONNECT [host_port] HTTP/1.1[crlf]Host: [host_port][crlf][crlf]"
+                    else -> ""
+                }
+
+                if (effectivePayload.isNotBlank()) {
+                    val norm = effectivePayload.replace("Host: [sni]", "Host: [host]", true)
+                    var formatted = PayloadGenerator.generatePayload(norm, targetHost, targetPort, sniHost)
+                    if (proxyAuth && proxyUser.isNotBlank()) {
+                        val b64Creds = Base64.encodeToString("$proxyUser:$proxyPass".toByteArray(), Base64.NO_WRAP)
+                        formatted = formatted.replaceFirst("\r\n\r\n", "\r\nProxy-Authorization: Basic $b64Creds\r\n\r\n")
                     }
-                    val formatted = PayloadGenerator.generatePayload(norm, targetHost, targetPort, sniHost)
                     val out = activeSocket.getOutputStream()
-                    val chunks = formatted.split(Regex("\\[(instant_)?split\\]", RegexOption.IGNORE_CASE))
+                    val chunks = formatted.split(Regex("\\[(instant_|delay_)?split\\]", RegexOption.IGNORE_CASE))
                     for ((idx, chunk) in chunks.withIndex()) {
                         if (chunk.isNotEmpty()) {
                             out.write(chunk.toByteArray(Charsets.UTF_8))
@@ -455,9 +521,9 @@ object SshEngine {
         }
 
         val bridgeSocket = Socket().apply {
-            tcpNoDelay = true
-            sendBufferSize = 262144
-            receiveBufferSize = 262144
+            tcpNoDelay = VpnStateBridge.tcpNoDelay.value
+            sendBufferSize = socketBufSize()
+            receiveBufferSize = socketBufSize()
             connect(InetSocketAddress("127.0.0.1", bridgePort), 8000)
         }
         return Pair(bridgeServer, bridgeSocket)
@@ -467,9 +533,9 @@ object SshEngine {
         var bridgeServer: ServerSocket? = null
         var bridgeSocket: Socket? = null
         try {
-            client.tcpNoDelay = true
-            client.sendBufferSize = 262144
-            client.receiveBufferSize = 262144
+            client.tcpNoDelay = VpnStateBridge.tcpNoDelay.value
+            client.sendBufferSize = socketBufSize()
+            client.receiveBufferSize = socketBufSize()
             val ins = BufferedInputStream(client.getInputStream(), 65536)
             val outs = BufferedOutputStream(client.getOutputStream(), 65536)
 
@@ -623,4 +689,4 @@ object SshEngine {
         }
     }
 }
-// === END OF FILE 8 ===
+// === END OF FILE 9 ===
