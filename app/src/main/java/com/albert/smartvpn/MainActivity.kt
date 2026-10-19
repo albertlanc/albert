@@ -19,6 +19,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -124,7 +125,6 @@ class MainActivity : ComponentActivity() {
         val profiles by viewModel.profiles.collectAsState()
         val currentThemeMode by VpnStateBridge.themeMode.collectAsState()
         val activeProfile = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
-        val deviceId = remember { VpnStateBridge.getDeviceHardwareId(context) }
 
         val themeOptions = listOf("Synthwave", "Default", "Cyberpunk", "Minimalist", "Corporate blue", "Matte cyan", "Monochrome")
 
@@ -141,7 +141,6 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                     ) {
-                        // DRAWER HEADER GRADIENT (Pink-Purple-Cyan shown in video at 00:06)[cite: 3]
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -166,7 +165,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("SMARTV2.5", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
-                                Text("VPN TUNNEL • v2.5 - PRO by Smartv2.5", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
+                                Text("VPN TUNNEL • v2.5 - PRO", fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                             }
                         }
 
@@ -269,11 +268,9 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         actions = {
-                            // USER MANUAL DIALOG BUTTON (Matches video top bar icon at 00:00)[cite: 3]
                             IconButton(onClick = { showUserManual = true }) {
                                 Icon(Icons.Default.MenuBook, "User Manual", tint = MaterialTheme.colorScheme.primary)
                             }
-                            // QUICK IMPORT BUTTON (Matches video top bar '+' icon at 00:00)[cite: 3]
                             IconButton(onClick = { scope.launch { pagerState.animateScrollToPage(1) } }) {
                                 Icon(Icons.Default.AddBox, "Add Config", tint = MaterialTheme.colorScheme.primary)
                             }
@@ -318,7 +315,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // APP THEME DIALOG (Matches video at 00:29)[cite: 3]
         if (showThemeMenu) {
             AlertDialog(
                 onDismissRequest = { showThemeMenu = false },
@@ -344,7 +340,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // USER MANUAL & GUIDE DIALOG (Matches video at 01:20)[cite: 3]
         if (showUserManual) {
             AlertDialog(
                 onDismissRequest = { showUserManual = false },
@@ -442,4 +437,3 @@ class MainActivity : ComponentActivity() {
         } catch (_: Throwable) {}
     }
 }
-// === END OF FILE 15 ===
