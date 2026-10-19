@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -27,8 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.URL
-import java.util.Scanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,7 +84,6 @@ fun ToolsTabContent() {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // GEOIP CARD
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -100,7 +98,6 @@ fun ToolsTabContent() {
             }
         }
 
-        // TCP CONNECTIVITY & LATENCY
         var hostInput by remember { mutableStateOf("google.com") }
         var portInput by remember { mutableStateOf("443") }
         var pingResult by remember { mutableStateOf("Ready to ping...") }
@@ -288,4 +285,3 @@ fun SecurityAuditTabContent() {
         }
     }
 }
-// === END OF FILE 14 ===
