@@ -4,9 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -31,9 +28,12 @@ fun LogsScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { Text("Engine Logs") },
+                title = { Text("Terminal Logs") },
                 actions = {
-                    IconButton(
+                    TextButton(onClick = { VpnStateBridge.clearLogs() }) {
+                        Text("Clear", color = Color(0xFFFF00B8))
+                    }
+                    TextButton(
                         onClick = {
                             if (logs.isNotEmpty()) {
                                 clipboardManager.setText(AnnotatedString(logs.joinToString("\n")))
@@ -41,18 +41,10 @@ fun LogsScreen(
                             }
                         }
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy Logs")
+                        Text("Copy", color = Color(0xFFFF00B8))
                     }
-                    TextButton(
-                        onClick = { VpnStateBridge.clearLogs() }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Clear Logs",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Clear", color = MaterialTheme.colorScheme.primary)
+                    TextButton(onClick = { throw RuntimeException("Manual Crash Test Triggered from Terminal Logs") }) {
+                        Text("Crash", color = Color(0xFFFF5252))
                     }
                 }
             )
@@ -67,7 +59,7 @@ fun LogsScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Logs cleared. Ready for new connection events.",
+                    text = "Terminal awaiting connection...",
                     color = Color(0xFF6E7681),
                     fontFamily = FontFamily.Monospace,
                     fontSize = 13.sp
@@ -87,7 +79,7 @@ fun LogsScreen(
                         logLine.contains("Failed", true) ||
                             logLine.contains("Error", true) ||
                             logLine.contains("Rejected", true) ||
-                            logLine.contains("Blocked", true) -> Color(0xFFFF5252)
+                            logLine.contains("CRASH", true) -> Color(0xFFFF5252)
                         logLine.contains("SUCCESS", true) ||
                             logLine.contains("Connected", true) ||
                             logLine.contains("Active", true) -> Color(0xFF00E676)
@@ -106,4 +98,3 @@ fun LogsScreen(
         }
     }
 }
-// === END OF FILE 14 ===
