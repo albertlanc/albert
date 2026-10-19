@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.albert.smartvpn.data.VpnProfile
@@ -47,7 +49,6 @@ fun HomeScreen(
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
     val loadBalancingEnabled by VpnStateBridge.loadBalancingEnabled.collectAsState()
     val turboSpeedEnabled by VpnStateBridge.turboSpeedEnabled.collectAsState()
-    val toastMessage by VpnStateBridge.toastMessage.collectAsState()
 
     var totalBytesRx by remember { mutableLongStateOf(0L) }
     var totalBytesTx by remember { mutableLongStateOf(0L) }
@@ -81,7 +82,6 @@ fun HomeScreen(
         }
     }
 
-    val isChecked = connectionState == "CONNECTED" || connectionState == "CONNECTING"
     val accentColor = MaterialTheme.colorScheme.primary
 
     val infiniteTransition = rememberInfiniteTransition(label = "ReactorRings")
@@ -102,7 +102,6 @@ fun HomeScreen(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. TOP BAR SWITCHES: Load Balancing + Turbo Speed Pill
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -156,7 +155,6 @@ fun HomeScreen(
             }
         }
 
-        // 2. ACTIVE CONFIGURATION DISPLAY CARD (NEON PURPLE BORDER + FLAG)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -193,7 +191,6 @@ fun HomeScreen(
             }
         }
 
-        // 3. CONNECTION STATUS & LARGE CONNECT POWER BUTTON
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -230,7 +227,6 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // LARGE CIRCULAR CONNECT BUTTON WITH ANIMATED NEON RING
                 Box(
                     modifier = Modifier
                         .size(148.dp)
@@ -273,7 +269,7 @@ fun HomeScreen(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
-                                imageVector = if (isConnected) Icons.Default.PowerSettingsNew else Icons.Default.PowerSettingsNew,
+                                imageVector = Icons.Default.PowerSettingsNew,
                                 contentDescription = "Connect",
                                 tint = if (isConnected) Color(0xFF00E676) else accentColor,
                                 modifier = Modifier.size(36.dp)
@@ -291,7 +287,6 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // UPLINK / DOWNLINK STATS ROW
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -345,4 +340,3 @@ private fun formatBytes(bytes: Long): String {
         else -> "$bytes B"
     }
 }
-// === END OF FILE 12 ===
