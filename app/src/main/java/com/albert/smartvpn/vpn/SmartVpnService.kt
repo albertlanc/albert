@@ -15,6 +15,7 @@ import com.albert.smartvpn.MainActivity
 import com.albert.smartvpn.R
 import com.albert.smartvpn.data.AppDatabase
 import com.albert.smartvpn.data.VpnProfile
+import com.albert.smartvpn.engine.HotshareServer
 import com.albert.smartvpn.engine.Hysteria2Engine
 import com.albert.smartvpn.engine.OpenVpnEngine
 import com.albert.smartvpn.engine.SlowDnsEngine
@@ -87,7 +88,7 @@ class SmartVpnService : VpnService() {
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
-        promoteForeground("Smart 2.5.1", "Connecting...")
+        promoteForeground("Smart v3", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
@@ -187,11 +188,15 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
+                if (VpnStateBridge.hotshareEnabled.value) {
+                    HotshareServer.startHotshare(localSocksPort, VpnStateBridge.shareNetPort.value)
+                }
+
                 val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart 2.5.1")
+                    .setSession("Smart v3")
                     .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
@@ -213,7 +218,7 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
                 VpnStateBridge.updateState("CONNECTED", "CONNECTED")
                 VpnStateBridge.addLog("Connected successfully.")
-                promoteForeground("Smart 2.5.1 • Connected", "Tunnel Active (${profile.name})")
+                promoteForeground("Smart v3 • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.slowDnsBoostEnabled.value = false
@@ -260,7 +265,7 @@ class SmartVpnService : VpnService() {
 
         val verifyNames = if (!sniHost.equals(serverHost, true)) "$sniHost,$serverHost" else sniHost
         val securityBlock = when {
-            isReality -> "\"realitySettings\": {\"serverName\": \"$sniHost\", \"fingerprint\": \"chrome\", \"publicKey\": \"${profile.pbk.trim()}\", \"shortId\": \"${profile.sid.trim()}\"},"
+            isReality -> "\"realitySettings\": {\"serverName\": \"$sniHost\", \"fingerprint\": \"${profile.utlsFingerprint}\", \"publicKey\": \"${profile.pbk.trim()}\", \"shortId\": \"${profile.sid.trim()}\"},"
             isTls -> "\"tlsSettings\": {\"serverName\": \"$sniHost\", \"verifyPeerCertByName\": \"$verifyNames\", \"alpn\": [\"${profile.alpn}\"]},"
             else -> ""
         }
@@ -285,6 +290,7 @@ class SmartVpnService : VpnService() {
                 SlowDnsEngine.stopSlowDns()
                 Hysteria2Engine.stopHysteria2()
                 OpenVpnEngine.stopOpenVpn()
+                HotshareServer.stopHotshare()
                 vpnInterface?.close()
                 vpnInterface = null
                 if (resetStatus) {
