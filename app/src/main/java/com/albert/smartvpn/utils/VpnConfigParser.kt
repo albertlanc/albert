@@ -3,12 +3,16 @@ package com.albert.smartvpn.utils
 import android.net.Uri
 import android.util.Base64
 import com.albert.smartvpn.data.VpnProfile
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.net.URLDecoder
+import java.net.URLEncoder
 
 object VpnConfigParser {
 
-    private fun detectFlag(host: String, name: String): String {
+    private val prettyGson = GsonBuilder().setPrettyPrinting().create()
+
+    fun detectFlag(host: String, name: String): String {
         val combined = "$host $name".lowercase()
         return when {
             combined.contains("uk") || combined.contains(".co.uk") || combined.contains("london") -> "🇬🇧"
@@ -22,6 +26,28 @@ object VpnConfigParser {
             combined.contains("ca") || combined.contains("canada") -> "🇨🇦"
             else -> "🇳🇱"
         }
+    }
+
+    fun toStandardUri(profile: VpnProfile): String {
+        val encName = URLEncoder.encode(profile.name, "UTF-8")
+        return when (profile.protocol.uppercase()) {
+            "TROJAN" -> "trojan://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
+            "VLESS" -> "vless://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&pbk=${profile.pbk}&sid=${profile.sid}&fp=${profile.utlsFingerprint}&flow=${profile.flow}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
+            "VMESS" -> {
+                val json = """{"v":"2","ps":"${profile.name}","add":"${profile.server}","port":"${profile.port}","id":"${profile.uuid}","aid":"0","net":"${profile.network}","type":"none","host":"${profile.wsHost.ifBlank { profile.sni }}","path":"${profile.path}","tls":"${profile.security}","sni":"${profile.sni}"}"""
+                "vmess://" + Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            }
+            "SHADOWSOCKS" -> {
+                val userB64 = Base64.encodeToString("${profile.ssMethod}:${profile.uuid}".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                "ss://$userB64@${profile.server}:${profile.port}#$encName"
+            }
+            "HYSTERIA2" -> "hy2://${profile.hy2Password.ifBlank { profile.uuid }}@${profile.server}:${profile.port}?sni=${profile.sni}&obfs=${profile.hy2Obfs}&obfs-password=${profile.hy2ObfsPassword}&mport=${profile.hy2PortHopping}#$encName"
+            else -> "ssh://${profile.sshUser}:${profile.sshPass}@${profile.server}:${profile.port}?sni=${profile.sni}&payload=${URLEncoder.encode(profile.payload, "UTF-8")}#$encName"
+        }
+    }
+
+    fun toStandardJson(profile: VpnProfile): String {
+        return if (profile.rawJson.isNotBlank()) profile.rawJson else prettyGson.toJson(profile)
     }
 
     fun parseUri(rawUri: String): VpnProfile? {
@@ -41,7 +67,31 @@ object VpnConfigParser {
                 text.startsWith("ssh://", ignoreCase = true) -> parseSshUri(text)
                 text.contains("[Interface]", ignoreCase = true) &&
                     text.contains("[Peer]", ignoreCase = true) -> parseWireGuardConf(text)
+                text.contains("remote ", ignoreCase = true) &&
+                    text.contains("dev tun", ignoreCase = true) -> parseOpenVpnConf(text)
+                text.startsWith("{") && text.endsWith("}") -> parseRawJsonProfile(text)
                 else -> null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseRawJsonProfile(jsonText: String): VpnProfile? {
+        return try {
+            val obj = JsonParser.parseString(jsonText).asJsonObject
+            if (obj.has("protocol") && obj.has("server")) {
+                prettyGson.fromJson(jsonText, VpnProfile::class.java)?.copy(id = 0, isSelected = true)
+            } else {
+                VpnProfile(
+                    name = "Imported JSON Config",
+                    protocol = "VMESS",
+                    server = "json-config",
+                    port = 443,
+                    uuid = "json",
+                    rawJson = jsonText,
+                    isSelected = true
+                )
             }
         } catch (_: Throwable) {
             null
@@ -58,7 +108,7 @@ object VpnConfigParser {
 
         val securityParam = uri.getQueryParameter("security")?.lowercase()
             ?: if (port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)) "none" else "tls"
-        val networkParam = uri.getQueryParameter("type")?.lowercase() ?: "tcp"
+        val networkParam = uri.getQueryParameter("type")?.lowercase() ?: "ws"
         val sniParam = uri.getQueryParameter("sni")
             ?: uri.getQueryParameter("host")
             ?: host
@@ -68,6 +118,8 @@ object VpnConfigParser {
             ?: "/"
         val pbkParam = uri.getQueryParameter("pbk") ?: ""
         val sidParam = uri.getQueryParameter("sid") ?: ""
+        val spxParam = uri.getQueryParameter("spx") ?: "/"
+        val fpParam = uri.getQueryParameter("fp") ?: "chrome"
         val flowParam = uri.getQueryParameter("flow") ?: ""
         val alpnParam = uri.getQueryParameter("alpn") ?: "h2, http/1.1"
 
@@ -84,6 +136,8 @@ object VpnConfigParser {
             alpn = alpnParam,
             pbk = pbkParam,
             sid = sidParam,
+            spx = spxParam,
+            utlsFingerprint = fpParam,
             flow = flowParam,
             path = pathParam,
             countryFlag = detectFlag(host, remark),
@@ -101,7 +155,7 @@ object VpnConfigParser {
         val port = obj.get("port")?.asString?.toIntOrNull() ?: 443
         val uuid = obj.get("id")?.asString?.trim() ?: return null
         val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "Imported VMESS"
-        val net = obj.get("net")?.asString?.lowercase() ?: "tcp"
+        val net = obj.get("net")?.asString?.lowercase() ?: "ws"
         val tlsField = obj.get("tls")?.asString?.lowercase() ?: ""
         val security = if (tlsField == "tls" || (port == 443 && tlsField != "none")) "tls" else "none"
         val sni = obj.get("sni")?.asString?.takeIf { it.isNotBlank() }
@@ -315,6 +369,28 @@ object VpnConfigParser {
             wgAllowedIps = allowedIps,
             wgMtu = mtu,
             countryFlag = detectFlag(endpointHost, "WireGuard"),
+            isSelected = true
+        )
+    }
+
+    private fun parseOpenVpnConf(ovpnText: String): VpnProfile? {
+        var host = ""
+        var port = 1194
+        ovpnText.lineSequence().forEach { raw ->
+            val line = raw.substringBefore("#").trim()
+            if (line.startsWith("remote ", ignoreCase = true)) {
+                val parts = line.split(Regex("\\s+"))
+                if (parts.size >= 2) host = parts[1]
+                if (parts.size >= 3) port = parts[2].toIntOrNull() ?: 1194
+            }
+        }
+        if (host.isEmpty()) return null
+        return VpnProfile(
+            name = "Imported OPENVPN",
+            protocol = "OPENVPN",
+            server = host,
+            port = port,
+            countryFlag = detectFlag(host, "OpenVPN"),
             isSelected = true
         )
     }
