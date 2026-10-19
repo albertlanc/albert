@@ -214,7 +214,7 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     scope.launch { drawerState.close() }
                                     try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/"))
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/Smartking4luV"))
                                         context.startActivity(intent)
                                     } catch (_: Throwable) {}
                                 }
@@ -226,7 +226,7 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     scope.launch { drawerState.close() }
                                     try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/"))
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/lancecreation"))
                                         context.startActivity(intent)
                                     } catch (_: Throwable) {}
                                 }
@@ -238,7 +238,7 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     scope.launch { drawerState.close() }
                                     try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://whatsapp.com/"))
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://chat.whatsapp.com/G9Jb6bgmvFqDAei8oVFU5k?s=cl&p=a&mlu=4&ilr=4"))
                                         context.startActivity(intent)
                                     } catch (_: Throwable) {}
                                 }
