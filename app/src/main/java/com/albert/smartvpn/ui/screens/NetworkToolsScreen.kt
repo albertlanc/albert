@@ -1,5 +1,8 @@
 package com.albert.smartvpn.ui.screens
 
+import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -26,8 +30,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
+import java.net.URL
+import java.util.Collections
+import java.util.Scanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +66,7 @@ fun NetworkToolsScreen(
                     "Tools" -> 0
                     "Speedtest" -> 1
                     "Security Audit 🛡️" -> 2
+                    "ShareNet" -> 3
                     else -> 0
                 },
                 edgePadding = 0.dp
@@ -64,12 +74,14 @@ fun NetworkToolsScreen(
                 Tab(selected = selectedTab == "Tools", onClick = { selectedTab = "Tools" }, text = { Text("Tools") })
                 Tab(selected = selectedTab == "Speedtest", onClick = { selectedTab = "Speedtest" }, text = { Text("Speedtest") })
                 Tab(selected = selectedTab == "Security Audit 🛡️", onClick = { selectedTab = "Security Audit 🛡️" }, text = { Text("Security Audit 🛡️") })
+                Tab(selected = selectedTab == "ShareNet", onClick = { selectedTab = "ShareNet" }, text = { Text("ShareNet") })
             }
 
             when (selectedTab) {
                 "Tools" -> ToolsTabContent()
                 "Speedtest" -> SpeedtestTabContent()
                 "Security Audit 🛡️" -> SecurityAuditTabContent()
+                "ShareNet" -> ShareNetTabContent()
                 else -> ToolsTabContent()
             }
         }
@@ -281,6 +293,48 @@ fun SecurityAuditTabContent() {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun ShareNetTabContent() {
+    val hotshareEnabled by VpnStateBridge.hotshareEnabled.collectAsState()
+    val hotshareIp by VpnStateBridge.hotshareIp.collectAsState()
+    val shareNetPort by VpnStateBridge.shareNetPort.collectAsState()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("ShareNet (VPN Tethering)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text(
+                "Share your active VPN connection with other devices over Wi-Fi Hotspot or USB tethering.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Enable ShareNet Proxy (Port $shareNetPort)", fontWeight = FontWeight.Bold)
+                Switch(
+                    checked = hotshareEnabled,
+                    onCheckedChange = { VpnStateBridge.hotshareEnabled.value = it }
+                )
+            }
+            if (hotshareEnabled) {
+                Divider()
+                Text(
+                    text = "HTTP Proxy Active:\nServer IP: $hotshareIp\nPort: $shareNetPort (HTTP) / 10808 (SOCKS5)",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
