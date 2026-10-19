@@ -63,7 +63,7 @@ object SlowDnsEngine {
         val cleanPubKey = normalizePubKeyToHex(pubKey)
 
         if (cleanNs.isEmpty() || cleanPubKey.length != 64) {
-            VpnStateBridge.addLog("Connection failed: Invalid SlowDNS/DNSTT public key or nameserver.")
+            VpnStateBridge.addLog("Connection failed: Invalid DNSTT public key or nameserver.")
             return false
         }
 
@@ -233,4 +233,3 @@ object SlowDnsEngine {
         }
     }
 }
-// === END OF FILE 8 ===
