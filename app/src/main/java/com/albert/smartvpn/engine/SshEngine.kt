@@ -52,7 +52,7 @@ object SshEngine {
     private val tlsPorts = setOf(443, 8443, 2053, 2083, 2087, 2096)
 
     private fun socketBufSize(): Int =
-        if (VpnStateBridge.turboSpeedEnabled.value) 524288 else 262144
+        if (VpnStateBridge.turboSpeedEnabled.value) 1048576 else 524288
 
     private fun buildAndroidSafeSshConfig(isSlowDns: Boolean): DefaultConfig {
         try {
@@ -110,9 +110,11 @@ object SshEngine {
             override fun checkServerTrusted(c: Array<out X509Certificate>?, a: String?) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
-        val proto = when (tlsVersion.uppercase()) {
-            "TLSV1.3" -> "TLSv1.3"
-            "TLSV1.2" -> "TLSv1.2"
+        val proto = when (tlsVersion.uppercase().replace("V", "")) {
+            "TLS1.3" -> "TLSv1.3"
+            "TLS1.2" -> "TLSv1.2"
+            "TLS1.1" -> "TLSv1.1"
+            "TLS1.0" -> "TLSv1"
             else -> "TLS"
         }
         return try {
