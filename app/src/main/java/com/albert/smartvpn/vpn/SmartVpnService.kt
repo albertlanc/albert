@@ -44,7 +44,7 @@ class SmartVpnService : VpnService() {
         Log.e(TAG, "Uncaught coroutine error", throwable)
         VpnStateBridge.slowDnsBoostEnabled.value = false
         VpnStateBridge.addLog("Disconnected.")
-        VpnStateBridge.updateState("DISCONNECTED", "Error")
+        VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
         stopVpnPipeline(resetStatus = false)
     }
 
@@ -84,8 +84,8 @@ class SmartVpnService : VpnService() {
 
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
-        VpnStateBridge.updateState("CONNECTING", "Connecting...")
-        promoteForeground("Smart VPN v2.0", "Connecting...")
+        VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
+        promoteForeground("Smartv2.5", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
@@ -96,7 +96,7 @@ class SmartVpnService : VpnService() {
 
                 if (profile == null) {
                     VpnStateBridge.addLog("No profile selected.")
-                    VpnStateBridge.updateState("DISCONNECTED", "No Profile")
+                    VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
@@ -104,22 +104,23 @@ class SmartVpnService : VpnService() {
                 val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
                 val proto = profile.protocol.uppercase()
 
-                VpnStateBridge.slowDnsBoostEnabled.value = (proto == "SLOWDNS")
+                VpnStateBridge.slowDnsBoostEnabled.value = proto.contains("DNSTT") || proto == "SLOWDNS"
 
                 val engineStarted = when {
-                    proto == "SLOWDNS" -> {
+                    proto.contains("DNSTT") || proto == "SLOWDNS" -> {
                         val slowDnsPort = 7000
-                        val targetDnsPort = if (profile.port in 1..65535) profile.port else 53
+                        val targetDnsPort = profile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
                         val dnsStarted = SlowDnsEngine.startSlowDns(
                             context = applicationContext,
-                            dnsServerIp = profile.slowDnsServerIp.ifBlank { "8.8.8.8" },
+                            dnsServerIp = profile.slowDnsServerIp.substringBefore(":").ifBlank { "8.8.8.8" },
                             dnsPort = targetDnsPort,
-                            nsDomain = profile.slowDnsDomain,
+                            nsDomain = profile.slowDnsDomain.ifBlank { profile.server },
                             pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
+                            dnsttMode = profile.dnsttMode,
                             localPort = slowDnsPort
                         )
                         if (!dnsStarted) false else SshEngine.startSshTunnel(
-                            protocolMode = "SLOWDNS",
+                            protocolMode = proto,
                             host = "127.0.0.1",
                             port = slowDnsPort,
                             user = profile.sshUser.ifBlank { profile.uuid },
@@ -128,7 +129,7 @@ class SmartVpnService : VpnService() {
                             isSlowDns = true
                         )
                     }
-                    proto.contains("SSH") -> {
+                    proto.startsWith("SSH") -> {
                         SshEngine.startSshTunnel(
                             protocolMode = proto,
                             host = profile.server,
@@ -140,6 +141,10 @@ class SmartVpnService : VpnService() {
                             sni = profile.sni,
                             proxyHost = profile.proxyHost,
                             proxyPort = profile.proxyPort,
+                            proxyAuth = profile.proxyAuth,
+                            proxyUser = profile.proxyUser,
+                            proxyPass = profile.proxyPass,
+                            tlsVersion = profile.tlsVersion,
                             isSlowDns = false
                         )
                     }
@@ -171,7 +176,7 @@ class SmartVpnService : VpnService() {
 
                 if (!engineStarted) {
                     VpnStateBridge.slowDnsBoostEnabled.value = false
-                    VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
+                    VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
@@ -180,7 +185,7 @@ class SmartVpnService : VpnService() {
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart VPN v2.0")
+                    .setSession("Smartv2.5")
                     .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
@@ -194,20 +199,20 @@ class SmartVpnService : VpnService() {
                 if (fd == null) {
                     VpnStateBridge.slowDnsBoostEnabled.value = false
                     VpnStateBridge.addLog("Disconnected.")
-                    VpnStateBridge.updateState("DISCONNECTED", "TUN Error")
+                    VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
-                VpnStateBridge.updateState("CONNECTED", "Connected (${profile.protocol})")
+                VpnStateBridge.updateState("CONNECTED", "CONNECTED")
                 VpnStateBridge.addLog("Connected successfully.")
-                promoteForeground("Smart VPN v2.0 • Connected", "Tunnel Active (${profile.name})")
+                promoteForeground("Smartv2.5 • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.slowDnsBoostEnabled.value = false
                 VpnStateBridge.addLog("Disconnected.")
-                VpnStateBridge.updateState("DISCONNECTED", "Disconnected")
+                VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                 stopVpnPipeline(resetStatus = false)
             }
         }
@@ -218,7 +223,7 @@ class SmartVpnService : VpnService() {
         val serverHost = profile.server.trim()
         val sniHost = profile.sni.trim().ifBlank { serverHost }
         val wsPath = profile.path.trim().ifBlank { "/" }
-        val networkType = profile.network.trim().lowercase().ifBlank { "ws" }
+        val networkType = profile.network.trim().lowercase().ifBlank { "tcp" }
 
         val isReality = profile.security.equals("reality", true) || profile.pbk.isNotBlank()
         val isTls = when {
@@ -242,14 +247,15 @@ class SmartVpnService : VpnService() {
         val flowField = if (profile.flow.isNotBlank() && networkType == "tcp") ", \"flow\": \"${profile.flow.trim()}\"" else ""
         val outboundSettings = when (protocolLower) {
             "trojan" -> "\"servers\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"password\": \"${profile.uuid.trim()}\"}]"
-            "vmess" -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"alterId\": 0, \"security\": \"zero\"}]}]"
+            "vmess" -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"alterId\": 0, \"security\": \"auto\"}]}]"
+            "shadowsocks" -> "\"servers\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"method\": \"${profile.ssMethod}\", \"password\": \"${profile.uuid.trim()}\"}]"
             else -> "\"vnext\": [{\"address\": \"$outboundAddress\", \"port\": $outboundPort, \"users\": [{\"id\": \"${profile.uuid.trim()}\", \"encryption\": \"none\"$flowField}]}]"
         }
 
         val verifyNames = if (!sniHost.equals(serverHost, true)) "$sniHost,$serverHost" else sniHost
         val securityBlock = when {
             isReality -> "\"realitySettings\": {\"serverName\": \"$sniHost\", \"fingerprint\": \"chrome\", \"publicKey\": \"${profile.pbk.trim()}\", \"shortId\": \"${profile.sid.trim()}\"},"
-            isTls -> "\"tlsSettings\": {\"serverName\": \"$sniHost\", \"verifyPeerCertByName\": \"$verifyNames\", \"alpn\": [\"http/1.1\"]},"
+            isTls -> "\"tlsSettings\": {\"serverName\": \"$sniHost\", \"verifyPeerCertByName\": \"$verifyNames\", \"alpn\": [\"${profile.alpn}\"]},"
             else -> ""
         }
         val transportBlock = when (networkType) {
@@ -281,7 +287,7 @@ class SmartVpnService : VpnService() {
                 vpnInterface?.close()
                 vpnInterface = null
                 if (resetStatus) {
-                    VpnStateBridge.updateState("DISCONNECTED", "Idle")
+                    VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                     VpnStateBridge.addLog("Disconnected.")
                 }
             } catch (_: Throwable) {
@@ -331,4 +337,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE 10 ===
+// === END OF FILE 11 ===
