@@ -28,7 +28,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.albert.smartvpn.data.VpnProfile
@@ -92,7 +94,6 @@ fun ConfigsScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                // SLOWDNS SPEED BOOST BANNER
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -203,7 +204,6 @@ fun ConfigsScreen(
                                             }
                                         }
 
-                                        // PING BADGE
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
                                             color = if (profile.lastPingMs > 0) Color(0xFF00E676).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
@@ -219,7 +219,6 @@ fun ConfigsScreen(
                                         }
                                     }
 
-                                    // CONFIG ACTION BUTTONS ROW (⚡, 🔗, 📄, ✏️, 🗑️)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -271,7 +270,6 @@ fun ConfigsScreen(
             }
         }
 
-        // QUICK IMPORT MENU DROPDOWN / DIALOG
         if (showImportMenu) {
             AlertDialog(
                 onDismissRequest = { showImportMenu = false },
@@ -305,7 +303,6 @@ fun ConfigsScreen(
             )
         }
 
-        // TOAST NOTIFICATION PILL OVERLAY (Matches video toast alerts like "Duplicated as...", "Deleted...", "Pinging...")
         if (toastMessage.isNotEmpty()) {
             Box(
                 modifier = Modifier
@@ -611,4 +608,3 @@ fun ShareAndLockDialog(
         }
     )
 }
-// === END OF FILE 13 ===
