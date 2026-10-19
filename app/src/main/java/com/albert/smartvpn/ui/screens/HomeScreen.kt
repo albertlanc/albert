@@ -154,7 +154,7 @@ fun HomeScreen(
             }
         }
 
-        // ONLY SHOW COUNTRY FLAG CARD WHEN A CONFIG IS LOADED & SELECTED
+        // STRICT LOGIC: Country flag card ONLY displays when an active configuration is loaded and selected
         if (activeProfile != null) {
             Card(
                 modifier = Modifier
