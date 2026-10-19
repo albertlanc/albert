@@ -1,4 +1,4 @@
-name: Build Smartv2.5 APK
+name: Build Smart 2.5.1 APK
 
 on:
   push:
@@ -92,10 +92,10 @@ jobs:
       - name: Build Debug APK
         run: |
           gradle assembleDebug --stacktrace
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Smartv2.5.apk
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Smart2.5.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Smartv2.5
-          path: app/build/outputs/apk/debug/Smartv2.5.apk
+          name: Smart2.5.1
+          path: app/build/outputs/apk/debug/Smart2.5.1.apk
