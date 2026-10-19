@@ -85,7 +85,7 @@ class SmartVpnService : VpnService() {
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
-        promoteForeground("Smartv2.5", "Connecting...")
+        promoteForeground("Smart 2.5.1", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
@@ -185,7 +185,7 @@ class SmartVpnService : VpnService() {
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smartv2.5")
+                    .setSession("Smart 2.5.1")
                     .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
@@ -207,7 +207,7 @@ class SmartVpnService : VpnService() {
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
                 VpnStateBridge.updateState("CONNECTED", "CONNECTED")
                 VpnStateBridge.addLog("Connected successfully.")
-                promoteForeground("Smartv2.5 • Connected", "Tunnel Active (${profile.name})")
+                promoteForeground("Smart 2.5.1 • Connected", "Tunnel Active (${profile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.slowDnsBoostEnabled.value = false
@@ -337,4 +337,3 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE 11 ===
