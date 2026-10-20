@@ -29,6 +29,7 @@ object VpnConfigParser {
     }
 
     fun toStandardUri(profile: VpnProfile): String {
+        if (profile.isImported) return ""
         val encName = URLEncoder.encode(profile.name, "UTF-8")
         return when (profile.protocol.uppercase()) {
             "TROJAN" -> "trojan://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
@@ -47,6 +48,7 @@ object VpnConfigParser {
     }
 
     fun toStandardJson(profile: VpnProfile): String {
+        if (profile.isImported) return ""
         return if (profile.rawJson.isNotBlank()) profile.rawJson else prettyGson.toJson(profile)
     }
 
@@ -54,7 +56,7 @@ object VpnConfigParser {
         val text = rawUri.trim()
         if (text.isEmpty()) return null
 
-        return try {
+        val parsed = try {
             when {
                 text.startsWith("vless://", ignoreCase = true) -> parseVlessOrTrojan(text, "VLESS")
                 text.startsWith("trojan://", ignoreCase = true) -> parseVlessOrTrojan(text, "TROJAN")
@@ -75,13 +77,14 @@ object VpnConfigParser {
         } catch (_: Throwable) {
             null
         }
+        return parsed?.copy(isImported = true)
     }
 
     private fun parseRawJsonProfile(jsonText: String): VpnProfile? {
         return try {
             val obj = JsonParser.parseString(jsonText).asJsonObject
             if (obj.has("protocol") && obj.has("server")) {
-                prettyGson.fromJson(jsonText, VpnProfile::class.java)?.copy(id = 0, isSelected = true)
+                prettyGson.fromJson(jsonText, VpnProfile::class.java)?.copy(id = 0, isSelected = true, isImported = true)
             } else {
                 VpnProfile(
                     name = "Imported JSON Config",
@@ -90,7 +93,8 @@ object VpnConfigParser {
                     port = 443,
                     uuid = "json",
                     rawJson = jsonText,
-                    isSelected = true
+                    isSelected = true,
+                    isImported = true
                 )
             }
         } catch (_: Throwable) {
@@ -141,7 +145,8 @@ object VpnConfigParser {
             flow = flowParam,
             path = pathParam,
             countryFlag = detectFlag(host, remark),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -176,7 +181,8 @@ object VpnConfigParser {
             wsHost = wsHost,
             path = path,
             countryFlag = detectFlag(host, name),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -209,7 +215,8 @@ object VpnConfigParser {
             uuid = password,
             ssMethod = method,
             countryFlag = detectFlag(host, remark),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -253,7 +260,8 @@ object VpnConfigParser {
             hy2UpMbps = upMbps,
             hy2DownMbps = downMbps,
             countryFlag = detectFlag(host, remark),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -284,7 +292,8 @@ object VpnConfigParser {
             slowDnsServerIp = dnsIp,
             pbk = pubKey,
             countryFlag = detectFlag(nsDomain, remark),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -318,7 +327,8 @@ object VpnConfigParser {
             payload = payload,
             security = if (port == 443 || mode.contains("TLS")) "tls" else "none",
             countryFlag = detectFlag(host, remark),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -369,7 +379,8 @@ object VpnConfigParser {
             wgAllowedIps = allowedIps,
             wgMtu = mtu,
             countryFlag = detectFlag(endpointHost, "WireGuard"),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 
@@ -391,7 +402,8 @@ object VpnConfigParser {
             server = host,
             port = port,
             countryFlag = detectFlag(host, "OpenVPN"),
-            isSelected = true
+            isSelected = true,
+            isImported = true
         )
     }
 }
