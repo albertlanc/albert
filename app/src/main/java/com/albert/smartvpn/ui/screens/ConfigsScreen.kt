@@ -28,7 +28,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,6 +72,8 @@ fun ConfigsScreen(
     var deletingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var showConnectedEditBlockAlert by remember { mutableStateOf(false) }
 
+    val tickedProfiles = remember(profiles) { profiles.filter { it.isSelected } }
+
     LaunchedEffect(triggerManual) {
         if (triggerManual) {
             VpnStateBridge.triggerManualConfigDialog.value = false
@@ -85,10 +86,10 @@ fun ConfigsScreen(
         if (triggerExportActive) {
             VpnStateBridge.triggerExportActiveDialog.value = false
             val active = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
-            if (active != null) {
-                exportingProfile = active
-            } else {
-                VpnStateBridge.toastMessage.value = "No active configuration to export"
+            when {
+                active == null -> VpnStateBridge.toastMessage.value = "No active configuration to export"
+                active.isImported -> VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+                else -> exportingProfile = active
             }
         }
     }
@@ -100,24 +101,35 @@ fun ConfigsScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Header Row: "Configurations" + 📷 + 🗑️ + ⚡
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp),
+                    .padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "Configurations",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
-                )
+                Column {
+                    Text(
+                        text = "Configurations",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = when {
+                            tickedProfiles.size > 1 -> "✓ ${tickedProfiles.size} Manual Configs Ticked (Simultaneous Connect)"
+                            tickedProfiles.firstOrNull()?.isImported == true -> "🔒 1 Imported Config Selected (Single-Tick Mode)"
+                            tickedProfiles.size == 1 -> "✓ 1 Manual Config Ticked (Multi-Tick Available)"
+                            else -> "Tap to tick manual configs or select an imported config"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     IconButton(onClick = { VpnStateBridge.triggerQrScannerDialog.value = true }) {
                         Text("📷", fontSize = 18.sp)
@@ -171,51 +183,64 @@ fun ConfigsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .border(
-                                    width = if (profile.isSelected) 1.5.dp else 1.dp,
-                                    color = if (profile.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                                    shape = RoundedCornerShape(16.dp)
+                                    width = if (profile.isSelected) 2.dp else 1.dp,
+                                    color = if (profile.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                    shape = RoundedCornerShape(18.dp)
                                 )
                                 .clickable {
                                     if (!isTunnelBusy) onSelectProfile(profile)
+                                    else VpnStateBridge.toastMessage.value = "Disconnect VPN before changing ticked configs"
                                 },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(18.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (profile.isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
                             )
                         ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        // Tick control: Manual configs can be multi-ticked; Imported configs single-tick only
+                                        Checkbox(
+                                            checked = profile.isSelected,
+                                            onCheckedChange = {
+                                                if (!isTunnelBusy) onSelectProfile(profile)
+                                                else VpnStateBridge.toastMessage.value = "Disconnect VPN before changing ticked configs"
+                                            }
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = profile.name,
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(profile.countryFlag, fontSize = 16.sp)
                                     }
 
                                     Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = Color(0xFFFF8F00)
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (profile.isImported) Color(0xFFD97706).copy(alpha = 0.2f) else Color(0xFF00E676).copy(alpha = 0.2f),
+                                        border = BorderStroke(1.dp, if (profile.isImported) Color(0xFFFFB300) else Color(0xFF00E676))
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.RssFeed,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .padding(2.dp)
-                                                .size(12.dp)
+                                        Text(
+                                            text = if (profile.isImported) "🔒 IMPORTED" else "✓ MANUAL",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (profile.isImported) Color(0xFFFFB300) else Color(0xFF00E676),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
@@ -245,7 +270,11 @@ fun ConfigsScreen(
                                         }
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = if (profile.isLocked) "• [Locked Profile]" else "• ${profile.server}:${profile.port}",
+                                            text = if (profile.isImported || profile.isLocked) {
+                                                "• [Protected Vault • Single Mode]"
+                                            } else {
+                                                "• ${profile.server}:${profile.port}"
+                                            },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1
@@ -263,9 +292,9 @@ fun ConfigsScreen(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                                // Bottom 5 Action Icons Row: ⚡ 🔗 📄 ✏️ 🗑️
+                                // Action Row: Imported configs ONLY allow Ping and Delete (No Export, No Clone, No Edit!)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End,
@@ -274,30 +303,32 @@ fun ConfigsScreen(
                                     IconButton(onClick = { onPingProfile(profile) }, modifier = Modifier.size(34.dp)) {
                                         Text("⚡", fontSize = 15.sp)
                                     }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    IconButton(onClick = { shareMenuProfile = profile }, modifier = Modifier.size(34.dp)) {
-                                        Text("🔗", fontSize = 15.sp)
+
+                                    if (!profile.isImported) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        IconButton(onClick = { shareMenuProfile = profile }, modifier = Modifier.size(34.dp)) {
+                                            Text("🔗", fontSize = 15.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        IconButton(onClick = { onDuplicateProfile(profile) }, modifier = Modifier.size(34.dp)) {
+                                            Text("📄", fontSize = 15.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        IconButton(
+                                            onClick = {
+                                                if (isCurrentlyConnectedProfile) {
+                                                    showConnectedEditBlockAlert = true
+                                                } else {
+                                                    editingProfile = profile
+                                                    showConfigDialog = true
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Text("✏️", fontSize = 15.sp)
+                                        }
                                     }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    IconButton(onClick = { onDuplicateProfile(profile) }, modifier = Modifier.size(34.dp)) {
-                                        Text("📄", fontSize = 15.sp)
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    IconButton(
-                                        onClick = {
-                                            if (isCurrentlyConnectedProfile) {
-                                                showConnectedEditBlockAlert = true
-                                            } else if (profile.isLocked) {
-                                                VpnStateBridge.toastMessage.value = "Locked configuration cannot be edited"
-                                            } else {
-                                                editingProfile = profile
-                                                showConfigDialog = true
-                                            }
-                                        },
-                                        modifier = Modifier.size(34.dp)
-                                    ) {
-                                        Text("✏️", fontSize = 15.sp)
-                                    }
+
                                     Spacer(modifier = Modifier.width(8.dp))
                                     IconButton(
                                         onClick = {
@@ -336,7 +367,7 @@ fun ConfigsScreen(
                         text = toastMessage,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                     )
                 }
@@ -344,21 +375,18 @@ fun ConfigsScreen(
         }
     }
 
-    // 1. Delete Confirmation Dialog (Matches 91603.mp4 at 02:06)
     if (deletingProfile != null) {
         val target = deletingProfile!!
         AlertDialog(
             onDismissRequest = { deletingProfile = null },
             title = { Text("Delete Configuration", fontWeight = FontWeight.ExtraBold) },
-            text = {
-                Text("Are you sure you want to delete \"${target.name}\"? This action cannot be undone.")
-            },
+            text = { Text("Are you sure you want to delete \"${target.name}\"? This action cannot be undone.") },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteProfile(target)
                     deletingProfile = null
                 }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text("Delete", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -369,7 +397,6 @@ fun ConfigsScreen(
         )
     }
 
-    // 2. Connected Edit Block Alert
     if (showConnectedEditBlockAlert) {
         AlertDialog(
             onDismissRequest = { showConnectedEditBlockAlert = false },
@@ -381,109 +408,122 @@ fun ConfigsScreen(
         )
     }
 
-    // 3. Share Menu Dialog (Matches 91603.mp4 at 00:10)[cite: 41]
+    // Share Menu Dialog (Strictly for Manually Created Profiles Only)
     if (shareMenuProfile != null) {
         val target = shareMenuProfile!!
-        AlertDialog(
-            onDismissRequest = { shareMenuProfile = null },
-            title = { Text("Share ${target.name}", fontWeight = FontWeight.ExtraBold) },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    TextButton(onClick = {
-                        shareMenuProfile = null
-                        exportingProfile = target
-                    }) {
-                        Text("Export Single Config 🔒", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                    TextButton(onClick = {
-                        shareMenuProfile = null
-                        if (profiles.size < 2) {
-                            VpnStateBridge.toastMessage.value = "You need at least 2 configurations in your vault to create a load balance bundle."
-                        } else {
-                            val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(profiles)
-                            clipboardManager.setText(AnnotatedString(bundleUri))
-                            VpnStateBridge.toastMessage.value = "Load Balance Bundle copied to clipboard"
+        if (target.isImported) {
+            shareMenuProfile = null
+            VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+        } else {
+            val manualProfiles = profiles.filter { !it.isImported }
+            AlertDialog(
+                onDismissRequest = { shareMenuProfile = null },
+                title = { Text("Share ${target.name}", fontWeight = FontWeight.ExtraBold) },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        TextButton(onClick = {
+                            shareMenuProfile = null
+                            exportingProfile = target
+                        }) {
+                            Text("Export Single Config 🔒", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
-                    }) {
-                        Text("Create Load Balance Bundle ⚖️", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = {
+                            shareMenuProfile = null
+                            if (manualProfiles.size < 2) {
+                                VpnStateBridge.toastMessage.value = "You need at least 2 manually created configurations to create a load balance bundle."
+                            } else {
+                                val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(manualProfiles)
+                                clipboardManager.setText(AnnotatedString(bundleUri))
+                                VpnStateBridge.toastMessage.value = "Load Balance Bundle copied to clipboard"
+                            }
+                        }) {
+                            Text("Create Load Balance Bundle ⚖️", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(onClick = {
+                            clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardUri(target)))
+                            VpnStateBridge.toastMessage.value = "Copied URI to clipboard"
+                            shareMenuProfile = null
+                        }) {
+                            Text("Copy URI", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(onClick = {
+                            clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardJson(target)))
+                            VpnStateBridge.toastMessage.value = "Copied JSON to clipboard"
+                            shareMenuProfile = null
+                        }) {
+                            Text("Copy JSON", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(onClick = {
+                            shareMenuProfile = null
+                            qrProfile = target
+                        }) {
+                            Text("Show QR Code (Standard / .svpn)", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
                     }
-                    TextButton(onClick = {
-                        clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardUri(target)))
-                        VpnStateBridge.toastMessage.value = "Copied URI to clipboard"
-                        shareMenuProfile = null
-                    }) {
-                        Text("Copy URI", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                    TextButton(onClick = {
-                        clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardJson(target)))
-                        VpnStateBridge.toastMessage.value = "Copied JSON to clipboard"
-                        shareMenuProfile = null
-                    }) {
-                        Text("Copy JSON", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                    TextButton(onClick = {
-                        shareMenuProfile = null
-                        qrProfile = target
-                    }) {
-                        Text("Show QR Code (Standard / .svpn)", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                },
+                confirmButton = {
+                    TextButton(onClick = { shareMenuProfile = null }) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.primary)
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { shareMenuProfile = null }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        )
+            )
+        }
     }
 
-    // 4. QR Code Modal
     if (qrProfile != null) {
         val target = qrProfile!!
-        val context = LocalContext.current
-        val hwid = remember { VpnStateBridge.getDeviceHardwareId(context) }
-        val svpnUri = remember(target) {
-            ConfigCryptoHelper.exportProfileUri(target, target.isLocked, target.lockPassphrase, target.lockedDeviceId.ifBlank { hwid })
-        }
-        AlertDialog(
-            onDismissRequest = { qrProfile = null },
-            title = { Text("QR Code: ${target.name}", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    ConfigQrMatrixView(data = svpnUri)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Scan with Smart v3 QR Scanner", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (target.isImported) {
+            qrProfile = null
+        } else {
+            val context = LocalContext.current
+            val hwid = remember { VpnStateBridge.getDeviceHardwareId(context) }
+            val svpnUri = remember(target) {
+                ConfigCryptoHelper.exportProfileUri(target, target.isLocked, target.lockPassphrase, target.lockedDeviceId.ifBlank { hwid })
+            }
+            AlertDialog(
+                onDismissRequest = { qrProfile = null },
+                title = { Text("QR Code: ${target.name}", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                        ConfigQrMatrixView(data = svpnUri)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Scan with Smart™vPN QR Scanner", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { qrProfile = null }) { Text("Close") }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { qrProfile = null }) { Text("Close") }
-            }
-        )
+            )
+        }
     }
 
-    // 5. Full Export Configuration Sheet (Matches 91603.mp4 at 00:20 - 01:26)[cite: 41]
     if (exportingProfile != null) {
-        ExportConfigurationFullDialog(
-            profile = exportingProfile!!,
-            onDismiss = { exportingProfile = null },
-            onSaveLockedProfile = { updated ->
-                onSaveProfile(updated)
-                exportingProfile = null
-            }
-        )
+        val target = exportingProfile!!
+        if (target.isImported) {
+            exportingProfile = null
+            VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+        } else {
+            ExportConfigurationFullDialog(
+                profile = target,
+                onDismiss = { exportingProfile = null },
+                onSaveLockedProfile = { updated ->
+                    onSaveProfile(updated)
+                    exportingProfile = null
+                }
+            )
+        }
     }
 
-    // 6. Full 24-Protocol Manual Configuration Editor (Matches 91602.mp4)[cite: 40]
     if (showConfigDialog) {
         ProtocolConfigDialog(
             initialProfile = editingProfile,
             onDismiss = { showConfigDialog = false },
             onSave = {
-                onSaveProfile(it)
+                onSaveProfile(it.copy(isImported = false))
                 showConfigDialog = false
             }
         )
@@ -503,7 +543,7 @@ fun ExportConfigurationFullDialog(
 
     var filename by remember { mutableStateOf(profile.name) }
     var uploadToCloud by remember { mutableStateOf(profile.uploadToCloud) }
-    var cloudProvider by remember { mutableStateOf(profile.cloudProvider.ifBlank { "Smartv3" }) }
+    var cloudProvider by remember { mutableStateOf(profile.cloudProvider.ifBlank { "Smartv3.5" }) }
     var burnAfterFirstImport by remember { mutableStateOf(profile.burnAfterFirstImport) }
     var cloudTimeLimit by remember { mutableStateOf(profile.cloudTimeLimit) }
     var cloudTimeUnit by remember { mutableStateOf(profile.cloudTimeUnit.ifBlank { "Minutes" }) }
@@ -517,7 +557,6 @@ fun ExportConfigurationFullDialog(
     var expiryDate by remember { mutableStateOf(profile.expiryDate) }
     var expiryTime by remember { mutableStateOf(profile.expiryTime) }
 
-    var hybridMultiCondition by remember { mutableStateOf(profile.hybridMultiCondition) }
     var slidingDuration by remember { mutableStateOf(profile.slidingDuration.ifBlank { "None" }) }
     var activeUptimeLimit by remember { mutableStateOf(if (profile.activeUptimeLimitHours > 0) profile.activeUptimeLimitHours.toString() else "") }
     var dataQuotaLimit by remember { mutableStateOf(if (profile.dataQuotaLimitGb > 0f) profile.dataQuotaLimitGb.toString() else "") }
@@ -532,10 +571,7 @@ fun ExportConfigurationFullDialog(
     var playStoreOnly by remember { mutableStateOf(profile.playStoreInstallOnly) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
-        ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -560,8 +596,6 @@ fun ExportConfigurationFullDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("EXPORT METHOD", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -580,7 +614,7 @@ fun ExportConfigurationFullDialog(
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Select Cloud Provider", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("Smartv3", "Ghost", "Rentry").forEach { prov ->
+                                listOf("Smartv3.5", "Ghost", "Rentry").forEach { prov ->
                                     val sel = cloudProvider == prov
                                     Button(
                                         onClick = {
@@ -593,61 +627,23 @@ fun ExportConfigurationFullDialog(
                                         shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(prov, fontSize = 12.sp, color = Color.White)
+                                        Text(prov, fontSize = 11.sp)
                                     }
                                 }
                             }
-
-                            Text("Cloud Expiration & Limits", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(if (cloudProvider == "Ghost") "Burn After First Import (Ghost Mode)" else "Burn After First Import", fontSize = 13.sp)
+                                Text("Burn After First Import", fontSize = 13.sp)
                                 Switch(checked = burnAfterFirstImport, onCheckedChange = { burnAfterFirstImport = it })
-                            }
-                            Text(
-                                text = if (burnAfterFirstImport) "🔥 Link self-destructs after its first import." else "♾️ Link can be imported multiple times without expiring.",
-                                fontSize = 11.sp,
-                                color = if (burnAfterFirstImport) Color(0xFFFFB300) else MaterialTheme.colorScheme.primary
-                            )
-
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = cloudTimeLimit,
-                                    onValueChange = { cloudTimeLimit = it },
-                                    label = { Text("Time Limit (Optional)") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Box(modifier = Modifier.weight(1f)) {
-                                    DropdownSelectorField(
-                                        label = "Unit",
-                                        selected = cloudTimeUnit,
-                                        options = listOf("Minutes", "Hours"),
-                                        onSelect = { cloudTimeUnit = it }
-                                    )
-                                }
-                            }
-
-                            if (!burnAfterFirstImport) {
-                                OutlinedTextField(
-                                    value = maxDevicesSeatLimit,
-                                    onValueChange = { maxDevicesSeatLimit = it },
-                                    label = { Text("Max Devices (Seat Limit)") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Text("Only exactly this many devices can download the config.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
                 }
 
                 Divider()
-                Text("SECURITY & LOCKING", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -658,74 +654,11 @@ fun ExportConfigurationFullDialog(
                 }
 
                 if (lockConfig) {
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Password (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = targetHwids,
-                        onValueChange = { targetHwids = it },
-                        label = { Text("Target HWID(s) (Comma separated)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = authorMessage,
-                        onValueChange = { authorMessage = it },
-                        label = { Text("Author's Message") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = customServerMessage,
-                        onValueChange = { customServerMessage = it },
-                        label = { Text("Custom Server Message") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = targetHwids, onValueChange = { targetHwids = it }, label = { Text("Target HWID(s) (Comma separated)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = authorMessage, onValueChange = { authorMessage = it }, label = { Text("Author's Message") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = customServerMessage, onValueChange = { customServerMessage = it }, label = { Text("Custom Server Message") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                    // Expiry Date & Exact Time with native Pickers
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = expiryDate,
-                            onValueChange = { expiryDate = it },
-                            label = { Text("Expiry Date") },
-                            readOnly = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable {
-                                    val cal = Calendar.getInstance()
-                                    DatePickerDialog(
-                                        context,
-                                        { _, y, m, d -> expiryDate = "%04d-%02d-%02d".format(y, m + 1, d) },
-                                        cal.get(Calendar.YEAR),
-                                        cal.get(Calendar.MONTH),
-                                        cal.get(Calendar.DAY_OF_MONTH)
-                                    ).show()
-                                }
-                        )
-                        OutlinedTextField(
-                            value = expiryTime,
-                            onValueChange = { expiryTime = it },
-                            label = { Text("Exact Time") },
-                            readOnly = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable {
-                                    val cal = Calendar.getInstance()
-                                    TimePickerDialog(
-                                        context,
-                                        { _, hr, min -> expiryTime = "%02d:%02d".format(hr, min) },
-                                        cal.get(Calendar.HOUR_OF_DAY),
-                                        cal.get(Calendar.MINUTE),
-                                        true
-                                    ).show()
-                                }
-                        )
-                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AssistChip(
                             onClick = {
@@ -738,7 +671,7 @@ fun ExportConfigurationFullDialog(
                                     cal.get(Calendar.DAY_OF_MONTH)
                                 ).show()
                             },
-                            label = { Text("📅 Pick Expiry Date") }
+                            label = { Text(if (expiryDate.isBlank()) "📅 Pick Expiry Date" else "📅 $expiryDate") }
                         )
                         AssistChip(
                             onClick = {
@@ -751,83 +684,36 @@ fun ExportConfigurationFullDialog(
                                     true
                                 ).show()
                             },
-                            label = { Text("⏰ Pick Time") }
+                            label = { Text(if (expiryTime.isBlank()) "⏰ Pick Time" else "⏰ $expiryTime") }
                         )
                     }
-
-                    Text("ADVANCED EXPIRY & QUOTAS", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("🔀 Hybrid Multi-Condition: Combine any options below — connection expires whichever limit is reached first.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     DropdownSelectorField(
                         label = "Sliding Duration",
                         selected = "Sliding Duration: $slidingDuration",
-                        options = listOf("None", "1 Hour", "12 Hours", "1 Day", "3 Days", "7 Days", "14 Days", "30 Days", "Custom"),
+                        options = listOf("None", "1 Hour", "12 Hours", "1 Day", "3 Days", "7 Days", "14 Days", "30 Days"),
                         onSelect = { slidingDuration = it }
                     )
-                    Text("Timer starts on first successful connection.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = activeUptimeLimit,
-                            onValueChange = { activeUptimeLimit = it },
-                            label = { Text("Active Uptime Limit") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.4f)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.weight(1f).height(52.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) { Text("Hours", fontSize = 13.sp) }
-                        }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = activeUptimeLimit, onValueChange = { activeUptimeLimit = it }, label = { Text("Uptime Limit (Hours)") }, singleLine = true, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = dataQuotaLimit, onValueChange = { dataQuotaLimit = it }, label = { Text("Data Quota (GB)") }, singleLine = true, modifier = Modifier.weight(1f))
                     }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = dataQuotaLimit,
-                            onValueChange = { dataQuotaLimit = it },
-                            label = { Text("Data Quota Limit") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.4f)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.weight(1f).height(52.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) { Text("GB", fontSize = 13.sp) }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = maxConnectionRuns,
-                        onValueChange = { maxConnectionRuns = it },
-                        label = { Text("Max Connection Runs (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = maxConnectionRuns, onValueChange = { maxConnectionRuns = it }, label = { Text("Max Connection Runs (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("🔥 Burn-After-Use (Self-Destruct)", fontWeight = FontWeight.Bold)
-                            Text("Permanently deletes profile upon disconnect.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text("🔥 Burn-After-Use (Self-Destruct)", fontWeight = FontWeight.Bold)
                         Switch(checked = burnAfterUse, onCheckedChange = { burnAfterUse = it })
                     }
 
-                    Text("Advanced Restrictions", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     DropdownSelectorField(
                         label = "Allowed Network for Import",
                         selected = allowedNetworkImport,
                         options = listOf("Any (WiFi & Mobile)", "Mobile Data Only", "WiFi Only"),
                         onSelect = { allowedNetworkImport = it }
                     )
-
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("VPN Connection: Mobile Data Only (Block WiFi)")
+                        Text("VPN Connection: Mobile Data Only")
                         Switch(checked = mobileDataOnly, onCheckedChange = { mobileDataOnly = it })
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -848,12 +734,11 @@ fun ExportConfigurationFullDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
                 Button(
                     onClick = {
                         val updatedProfile = profile.copy(
                             name = filename.ifBlank { profile.name },
+                            isImported = false,
                             uploadToCloud = uploadToCloud,
                             cloudProvider = cloudProvider,
                             burnAfterFirstImport = burnAfterFirstImport,
@@ -867,7 +752,6 @@ fun ExportConfigurationFullDialog(
                             customServerMessage = customServerMessage,
                             expiryDate = expiryDate,
                             expiryTime = expiryTime,
-                            hybridMultiCondition = hybridMultiCondition,
                             slidingDuration = slidingDuration,
                             activeUptimeLimitHours = activeUptimeLimit.toIntOrNull() ?: 0,
                             dataQuotaLimitGb = dataQuotaLimit.toFloatOrNull() ?: 0f,
@@ -880,12 +764,7 @@ fun ExportConfigurationFullDialog(
                             blockSniffers = blockSniffers,
                             playStoreInstallOnly = playStoreOnly
                         )
-                        val encryptedUri = ConfigCryptoHelper.exportProfileUri(
-                            updatedProfile,
-                            lockConfig,
-                            password,
-                            targetHwids
-                        )
+                        val encryptedUri = ConfigCryptoHelper.exportProfileUri(updatedProfile, lockConfig, password, targetHwids)
                         if (uploadToCloud) {
                             scope.launch(Dispatchers.IO) {
                                 val cloudLink = ConfigCryptoHelper.uploadConfigToCloud(encryptedUri, cloudProvider)
@@ -912,15 +791,12 @@ fun ExportConfigurationFullDialog(
                             onSaveLockedProfile(updatedProfile)
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF00D6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(26.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
                     Text(
                         text = if (uploadToCloud) "Export to Cloud" else "Save as .svpn File",
-                        color = Color.White,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp
                     )
@@ -938,30 +814,11 @@ fun ProtocolConfigDialog(
     onSave: (VpnProfile) -> Unit
 ) {
     val protocolModes = listOf(
-        "SSH",
-        "SSH-DIRECT",
-        "SSH-PROXY",
-        "SSH-PAYLOAD",
-        "SSH-PROXY-PAYLOAD",
-        "SSH-TLS",
-        "SSH-TLS-PROXY",
-        "SSH-TLS-PAYLOAD",
-        "SSH-TLS-PROXY-PAYLOAD",
-        "SSH-DNSTT",
-        "SSH-DNSTT-PAYLOAD",
-        "SSH-DNSTT-PROXY",
-        "SSH-DNSTT-PROXY-PAYLOAD",
-        "SSH-DNSTT-TLS",
-        "SSH-DNSTT-TLS-PAYLOAD",
-        "SSH-DNSTT-TLS-PROXY",
-        "SSH-DNSTT-TLS-PROXY-PAYLOAD",
-        "VMESS",
-        "VLESS",
-        "TROJAN",
-        "SHADOWSOCKS",
-        "WIREGUARD",
-        "OPENVPN",
-        "HYSTERIA2"
+        "SSH", "SSH-DIRECT", "SSH-PROXY", "SSH-PAYLOAD", "SSH-PROXY-PAYLOAD",
+        "SSH-TLS", "SSH-TLS-PROXY", "SSH-TLS-PAYLOAD", "SSH-TLS-PROXY-PAYLOAD",
+        "SSH-DNSTT", "SSH-DNSTT-PAYLOAD", "SSH-DNSTT-PROXY", "SSH-DNSTT-PROXY-PAYLOAD",
+        "SSH-DNSTT-TLS", "SSH-DNSTT-TLS-PAYLOAD", "SSH-DNSTT-TLS-PROXY", "SSH-DNSTT-TLS-PROXY-PAYLOAD",
+        "VMESS", "VLESS", "TROJAN", "SHADOWSOCKS", "WIREGUARD", "OPENVPN", "HYSTERIA2"
     )
 
     var selectedProtocol by remember { mutableStateOf(initialProfile?.protocol?.uppercase() ?: "VMESS") }
@@ -990,9 +847,7 @@ fun ProtocolConfigDialog(
 
     val initProxyHost = initialProfile?.proxyHost ?: ""
     val initProxyPort = initialProfile?.proxyPort ?: 8080
-    var httpProxy by remember {
-        mutableStateOf(if (initProxyHost.isNotBlank()) "$initProxyHost:$initProxyPort" else "")
-    }
+    var httpProxy by remember { mutableStateOf(if (initProxyHost.isNotBlank()) "$initProxyHost:$initProxyPort" else "") }
 
     var payload by remember { mutableStateOf(initialProfile?.payload ?: "") }
     var showInlinePayloadGen by remember { mutableStateOf(false) }
@@ -1004,7 +859,6 @@ fun ProtocolConfigDialog(
     var nameserver by remember { mutableStateOf(initialProfile?.slowDnsDomain ?: "") }
     var publicKey by remember { mutableStateOf(initialProfile?.slowDnsPubKey ?: "") }
 
-    // Xray / ShadowSocks / Reality fields
     var uuid by remember { mutableStateOf(initialProfile?.uuid ?: "") }
     var ssMethod by remember { mutableStateOf(initialProfile?.ssMethod ?: "aes-256-gcm") }
     var network by remember { mutableStateOf(initialProfile?.network ?: "tcp") }
@@ -1020,15 +874,13 @@ fun ProtocolConfigDialog(
     var verifyCertName by remember { mutableStateOf(initialProfile?.verifyCertName ?: "") }
     var wsHost by remember { mutableStateOf(initialProfile?.wsHost ?: "") }
     var wsPath by remember { mutableStateOf(initialProfile?.path ?: "") }
-    var allowInsecure by remember { mutableStateOf(initialProfile?.allowInsecure ?: false) }
+    var allowInsecure by remember { mutableStateOf(initialProfile?.allowInsecure ?: true) }
 
-    // WireGuard fields
     var wgPrivateKey by remember { mutableStateOf(initialProfile?.wgPrivateKey ?: "") }
     var wgPublicKey by remember { mutableStateOf(initialProfile?.wgPublicKey ?: "") }
     var wgAddress by remember { mutableStateOf(initialProfile?.wgAddress ?: "10.0.0.2/32") }
     var wgAllowedIps by remember { mutableStateOf(initialProfile?.wgAllowedIps ?: "0.0.0.0/0, ::/0") }
 
-    // Hysteria2 fields
     var hy2Password by remember { mutableStateOf(initialProfile?.hy2Password ?: "") }
     var hy2ObfsPassword by remember { mutableStateOf(initialProfile?.hy2ObfsPassword ?: "") }
     var hy2PortHopping by remember { mutableStateOf(initialProfile?.hy2PortHopping ?: "") }
@@ -1051,10 +903,7 @@ fun ProtocolConfigDialog(
     val hasDnstt = selectedProtocol.contains("DNSTT")
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
-        ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1068,25 +917,16 @@ fun ProtocolConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (initialProfile == null) "New Configuration" else "Edit Configuration",
+                        text = if (initialProfile == null) "New Manual Configuration" else "Edit Configuration",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
                         modifier = Modifier.weight(1f),
                         textAlign = TextAlign.Center
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
                 }
 
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Profile Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Profile Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                 DropdownSelectorField(
                     label = "Protocol",
@@ -1104,121 +944,34 @@ fun ProtocolConfigDialog(
                     }
                 )
 
-                // 1. ALL 17 SSH / TLS / PROXY / PAYLOAD / DNSTT PERMUTATIONS
                 if (isSshFamily) {
-                    OutlinedTextField(
-                        value = server,
-                        onValueChange = { server = it },
-                        label = { Text("SSH Host") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { port = it },
-                        label = { Text("SSH Port") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (hasTls) {
-                        OutlinedTextField(
-                            value = sni,
-                            onValueChange = { sni = it },
-                            label = { Text("SNI / Bug Host (Optional)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    OutlinedTextField(
-                        value = udpgwPort,
-                        onValueChange = { udpgwPort = it },
-                        label = { Text("Udpgw Port") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Enable UDPGW transparent DNS. This may override any set custom DNS server.",
-                            fontSize = 12.sp,
-                            modifier = Modifier.weight(1f)
-                        )
+                    OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("SSH Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("SSH Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = udpgwPort, onValueChange = { udpgwPort = it }, label = { Text("Udpgw Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Enable UDPGW transparent DNS", fontSize = 12.sp, modifier = Modifier.weight(1f))
                         Checkbox(checked = enableUdpgwDns, onCheckedChange = { enableUdpgwDns = it })
                     }
-                    OutlinedTextField(
-                        value = sshUser,
-                        onValueChange = { sshUser = it },
-                        label = { Text("SSH Username") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = sshPass,
-                        onValueChange = { sshPass = it },
-                        label = { Text("SSH Password") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = sshUser, onValueChange = { sshUser = it }, label = { Text("SSH Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = sshPass, onValueChange = { sshPass = it }, label = { Text("SSH Password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                     if (hasTls) {
-                        DropdownSelectorField(
-                            label = "TLS Version",
-                            selected = tlsVersion,
-                            options = listOf("DEFAULT", "TLS1.0", "TLS1.1", "TLS1.2", "TLS1.3"),
-                            onSelect = { tlsVersion = it }
-                        )
-                        OutlinedTextField(
-                            value = sni,
-                            onValueChange = { sni = it },
-                            label = { Text("SNI (Bug Host)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        DropdownSelectorField(label = "TLS Version", selected = tlsVersion, options = listOf("DEFAULT", "TLS1.0", "TLS1.1", "TLS1.2", "TLS1.3"), onSelect = { tlsVersion = it })
+                        OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI (Bug Host)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
-
                     if (hasProxy) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Authenticate Proxy")
                             Checkbox(checked = authenticateProxy, onCheckedChange = { authenticateProxy = it })
                         }
-                        OutlinedTextField(
-                            value = httpProxy,
-                            onValueChange = { httpProxy = it },
-                            label = { Text("HTTP Proxy (ip:port or host:port)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        OutlinedTextField(value = httpProxy, onValueChange = { httpProxy = it }, label = { Text("HTTP Proxy (ip:port or host:port)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
-
                     if (hasPayload) {
-                        Text(
-                            text = "Payload",
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center
-                        )
-                        OutlinedButton(
-                            onClick = { showInlinePayloadGen = !showInlinePayloadGen },
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                        ) {
-                            Text("⚙ Open Payload Generator", color = Color.White)
+                        OutlinedButton(onClick = { showInlinePayloadGen = !showInlinePayloadGen }, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth().height(46.dp)) {
+                            Text("⚙ Open Payload Generator")
                         }
                         if (showInlinePayloadGen) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.fillMaxWidth().height(480.dp)
-                            ) {
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().height(460.dp)) {
                                 FullPayloadGeneratorScreen()
                             }
                         }
@@ -1226,384 +979,97 @@ fun ProtocolConfigDialog(
                             value = payload,
                             onValueChange = { payload = it },
                             label = { Text("Payload") },
-                            minLines = 5,
+                            minLines = 4,
                             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-
                     if (hasDnstt) {
-                        DropdownSelectorField(
-                            label = "DNSTT Mode",
-                            selected = dnsttMode,
-                            options = listOf("UDP", "DoH", "DoT"),
-                            onSelect = { dnsttMode = it }
-                        )
-                        OutlinedTextField(
-                            value = udpResolver,
-                            onValueChange = { udpResolver = it },
-                            label = { Text("UDP Resolver (e.g. 8.8.8.8:53)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = nameserver,
-                            onValueChange = { nameserver = it },
-                            label = { Text("Nameserver") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = publicKey,
-                            onValueChange = { publicKey = it },
-                            label = { Text("Public Key") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        DropdownSelectorField(label = "DNSTT Mode", selected = dnsttMode, options = listOf("UDP", "DoH", "DoT"), onSelect = { dnsttMode = it })
+                        OutlinedTextField(value = udpResolver, onValueChange = { udpResolver = it }, label = { Text("UDP Resolver (e.g. 8.8.8.8:53)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = nameserver, onValueChange = { nameserver = it }, label = { Text("Nameserver") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = publicKey, onValueChange = { publicKey = it }, label = { Text("Public Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
                 }
 
-                // 2. VMESS / VLESS / TROJAN / SHADOWSOCKS
                 if (selectedProtocol in listOf("VMESS", "VLESS", "TROJAN", "SHADOWSOCKS")) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("JSON Editor", fontWeight = FontWeight.Bold)
                         Switch(checked = jsonEditor, onCheckedChange = { jsonEditor = it })
                     }
-
                     if (jsonEditor) {
-                        OutlinedTextField(
-                            value = rawJson,
-                            onValueChange = { rawJson = it },
-                            label = { Text("Raw Xray JSON Configuration") },
-                            minLines = 8,
-                            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        OutlinedTextField(value = rawJson, onValueChange = { rawJson = it }, label = { Text("Raw Xray JSON Configuration") }, minLines = 6, modifier = Modifier.fillMaxWidth())
                     } else {
-                        OutlinedTextField(
-                            value = server,
-                            onValueChange = { server = it },
-                            label = { Text("Server IP / Host") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = port,
-                            onValueChange = { port = it },
-                            label = { Text("Server Port") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server IP / Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("Server Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         if (selectedProtocol == "SHADOWSOCKS") {
-                            OutlinedTextField(
-                                value = ssMethod,
-                                onValueChange = { ssMethod = it },
-                                label = { Text("Encryption (e.g. aes-256-gcm)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            OutlinedTextField(value = ssMethod, onValueChange = { ssMethod = it }, label = { Text("Encryption (e.g. aes-256-gcm)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         }
-                        OutlinedTextField(
-                            value = uuid,
-                            onValueChange = { uuid = it },
-                            label = { Text(if (selectedProtocol in listOf("TROJAN", "SHADOWSOCKS")) "Password" else "UUID") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = network,
-                            onValueChange = { network = it },
-                            label = { Text("Network (tcp, ws, grpc)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = security,
-                            onValueChange = { security = it },
-                            label = { Text("Security (none, tls, xtls, reality)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
+                        OutlinedTextField(value = uuid, onValueChange = { uuid = it }, label = { Text(if (selectedProtocol in listOf("TROJAN", "SHADOWSOCKS")) "Password" else "UUID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = network, onValueChange = { network = it }, label = { Text("Network (tcp, ws, grpc)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = security, onValueChange = { security = it }, label = { Text("Security (none, tls, xtls, reality)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         if (selectedProtocol == "VLESS") {
-                            OutlinedTextField(
-                                value = pbk,
-                                onValueChange = { pbk = it },
-                                label = { Text("Reality Public Key (pbk)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedTextField(
-                                value = sid,
-                                onValueChange = { sid = it },
-                                label = { Text("Reality Short ID (sid)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedTextField(
-                                value = spx,
-                                onValueChange = { spx = it },
-                                label = { Text("Reality SpiderX (spx)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            DropdownSelectorField(
-                                label = "uTLS Fingerprint",
-                                selected = utlsFingerprint,
-                                options = listOf("chrome", "firefox", "safari", "ios", "android", "edge", "random"),
-                                onSelect = { utlsFingerprint = it }
-                            )
+                            OutlinedTextField(value = pbk, onValueChange = { pbk = it }, label = { Text("Reality Public Key (pbk)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = sid, onValueChange = { sid = it }, label = { Text("Reality Short ID (sid)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = spx, onValueChange = { spx = it }, label = { Text("Reality SpiderX (spx)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            DropdownSelectorField(label = "uTLS Fingerprint", selected = utlsFingerprint, options = listOf("chrome", "firefox", "safari", "ios", "android", "edge", "random"), onSelect = { utlsFingerprint = it })
                         }
-
-                        OutlinedTextField(
-                            value = alpn,
-                            onValueChange = { alpn = it },
-                            label = { Text("ALPN (e.g. h2,http/1.1)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
+                        OutlinedTextField(value = alpn, onValueChange = { alpn = it }, label = { Text("ALPN (e.g. h2,http/1.1)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         if (selectedProtocol in listOf("VLESS", "TROJAN")) {
-                            OutlinedTextField(
-                                value = flow,
-                                onValueChange = { flow = it },
-                                label = { Text("Flow (e.g. xtls-rprx-vision)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            OutlinedTextField(value = flow, onValueChange = { flow = it }, label = { Text("Flow (e.g. xtls-rprx-vision)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         }
-
-                        OutlinedTextField(
-                            value = sni,
-                            onValueChange = { sni = it },
-                            label = { Text("SNI (Bug Host, multi-SNI comma separated)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI (Bug Host, multi-SNI comma separated)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Auto-rotate multi-SNI Bug Hosts", fontWeight = FontWeight.SemiBold)
                             Switch(checked = autoRotateSni, onCheckedChange = { autoRotateSni = it })
                         }
-
-                        OutlinedTextField(
-                            value = pinSha256,
-                            onValueChange = { pinSha256 = it },
-                            label = { Text("pinSHA256") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = verifyCertName,
-                            onValueChange = { verifyCertName = it },
-                            label = { Text("verifyCertName") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = wsHost,
-                            onValueChange = { wsHost = it },
-                            label = { Text("Host (WebSocket) / Authority (gRPC)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = wsPath,
-                            onValueChange = { wsPath = it },
-                            label = { Text("Path (WebSocket) / ServiceName (gRPC)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        OutlinedTextField(value = pinSha256, onValueChange = { pinSha256 = it }, label = { Text("pinSHA256") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = verifyCertName, onValueChange = { verifyCertName = it }, label = { Text("verifyCertName") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = wsHost, onValueChange = { wsHost = it }, label = { Text("Host (WebSocket) / Authority (gRPC)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = wsPath, onValueChange = { wsPath = it }, label = { Text("Path (WebSocket) / ServiceName (gRPC)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = allowInsecure, onCheckedChange = { allowInsecure = it })
                             Text("Allow Insecure (Bypass TLS Cert Verification)", fontSize = 13.sp)
                         }
                     }
                 }
 
-                // 3. WIREGUARD
                 if (selectedProtocol == "WIREGUARD") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("JSON Editor", fontWeight = FontWeight.Bold)
-                        Switch(checked = jsonEditor, onCheckedChange = { jsonEditor = it })
-                    }
-                    OutlinedTextField(
-                        value = server,
-                        onValueChange = { server = it },
-                        label = { Text("WireGuard Endpoint IP / Host") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { port = it },
-                        label = { Text("WireGuard Endpoint Port (e.g. 51820)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = wgPrivateKey,
-                        onValueChange = { wgPrivateKey = it },
-                        label = { Text("Client Private Key (SecretKey)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = wgPublicKey,
-                        onValueChange = { wgPublicKey = it },
-                        label = { Text("Peer Public Key") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = wgAddress,
-                        onValueChange = { wgAddress = it },
-                        label = { Text("Client Address (e.g. 10.0.0.2/32)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = wgAllowedIps,
-                        onValueChange = { wgAllowedIps = it },
-                        label = { Text("Allowed IPs (e.g. 0.0.0.0/0, ::/0)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("WireGuard Endpoint IP / Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("WireGuard Endpoint Port (51820)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = wgPrivateKey, onValueChange = { wgPrivateKey = it }, label = { Text("Client Private Key (SecretKey)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = wgPublicKey, onValueChange = { wgPublicKey = it }, label = { Text("Peer Public Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = wgAddress, onValueChange = { wgAddress = it }, label = { Text("Client Address (10.0.0.2/32)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = wgAllowedIps, onValueChange = { wgAllowedIps = it }, label = { Text("Allowed IPs (0.0.0.0/0, ::/0)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
 
-                // 4. OPENVPN
                 if (selectedProtocol == "OPENVPN") {
-                    OutlinedTextField(
-                        value = server,
-                        onValueChange = { server = it },
-                        label = { Text("Server IP / Host") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { port = it },
-                        label = { Text("Server Port") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = sshUser,
-                        onValueChange = { sshUser = it },
-                        label = { Text("OpenVPN Username (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = sshPass,
-                        onValueChange = { sshPass = it },
-                        label = { Text("OpenVPN Password (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server IP / Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("Server Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = sshUser, onValueChange = { sshUser = it }, label = { Text("OpenVPN Username (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = sshPass, onValueChange = { sshPass = it }, label = { Text("OpenVPN Password (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
 
-                // 5. HYSTERIA2
                 if (selectedProtocol == "HYSTERIA2") {
-                    OutlinedTextField(
-                        value = server,
-                        onValueChange = { server = it },
-                        label = { Text("Server IP / Host") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { port = it },
-                        label = { Text("Server Port") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = hy2Password,
-                        onValueChange = { hy2Password = it },
-                        label = { Text("Auth Password") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = hy2ObfsPassword,
-                        onValueChange = { hy2ObfsPassword = it },
-                        label = { Text("Obfs password (Salamander)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = hy2PortHopping,
-                        onValueChange = { hy2PortHopping = it },
-                        label = { Text("Port Hopping (e.g. 20000-50000)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server IP / Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("Server Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = hy2Password, onValueChange = { hy2Password = it }, label = { Text("Auth Password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = hy2ObfsPassword, onValueChange = { hy2ObfsPassword = it }, label = { Text("Obfs password (Salamander)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = hy2PortHopping, onValueChange = { hy2PortHopping = it }, label = { Text("Port Hopping (e.g. 20000-50000)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = hy2UpMbps,
-                            onValueChange = { hy2UpMbps = it },
-                            label = { Text("Up (Mbps)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = hy2DownMbps,
-                            onValueChange = { hy2DownMbps = it },
-                            label = { Text("Down (Mbps)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
+                        OutlinedTextField(value = hy2UpMbps, onValueChange = { hy2UpMbps = it }, label = { Text("Up (Mbps)") }, singleLine = true, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = hy2DownMbps, onValueChange = { hy2DownMbps = it }, label = { Text("Down (Mbps)") }, singleLine = true, modifier = Modifier.weight(1f))
                     }
-                    OutlinedTextField(
-                        value = sni,
-                        onValueChange = { sni = it },
-                        label = { Text("SNI (Server Name Indication)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = pinSha256,
-                        onValueChange = { pinSha256 = it },
-                        label = { Text("pinSHA256") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = allowInsecure, onCheckedChange = { allowInsecure = it })
-                        Text("Allow Insecure (Bypass TLS Cert Verification)", fontSize = 13.sp)
-                    }
+                    OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI (Server Name Indication)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pinSha256, onValueChange = { pinSha256 = it }, label = { Text("pinSHA256") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
 
                 Button(
                     onClick = {
                         val resolvedPort = port.toIntOrNull() ?: 443
                         val pHost = httpProxy.substringBefore(":").trim()
                         val pPort = httpProxy.substringAfter(":", "8080").toIntOrNull() ?: 8080
-                        val resolvedServer = server.trim().ifBlank {
-                            if (hasDnstt) nameserver.trim() else sni.trim()
-                        }
+                        val resolvedServer = server.trim().ifBlank { if (hasDnstt) nameserver.trim() else sni.trim() }
 
                         onSave(
                             VpnProfile(
@@ -1628,6 +1094,7 @@ fun ProtocolConfigDialog(
                                 path = wsPath.ifBlank { "/" },
                                 rawJson = if (jsonEditor) rawJson else "",
                                 isSelected = true,
+                                isImported = false,
                                 sshUser = sshUser,
                                 sshPass = sshPass,
                                 payload = payload,
@@ -1661,18 +1128,11 @@ fun ProtocolConfigDialog(
                             )
                         )
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF00D6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
+                    modifier = Modifier.fillMaxWidth().height(54.dp)
                 ) {
-                    Text(
-                        text = "SAVE CONFIGURATION",
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp
-                    )
+                    Text("SAVE CONFIGURATION", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
                 }
             }
         }
@@ -1681,9 +1141,7 @@ fun ProtocolConfigDialog(
 
 @Composable
 fun ConfigQrMatrixView(data: String) {
-    val digest = remember(data) {
-        MessageDigest.getInstance("SHA-256").digest(data.toByteArray())
-    }
+    val digest = remember(data) { MessageDigest.getInstance("SHA-256").digest(data.toByteArray()) }
     Box(
         modifier = Modifier
             .size(180.dp)
@@ -1718,3 +1176,4 @@ fun ConfigQrMatrixView(data: String) {
         }
     }
 }
+// === END OF FILE 15 ===
