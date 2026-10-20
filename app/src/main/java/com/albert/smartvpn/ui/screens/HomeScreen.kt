@@ -92,6 +92,7 @@ fun HomeScreen(
     }
 
     val accentColor = if (isConnected) Color(0xFF00E676) else MaterialTheme.colorScheme.primary
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
 
     val infiniteTransition = rememberInfiniteTransition(label = "SmartV35Core")
     val orbitAngle by infiniteTransition.animateFloat(
@@ -185,7 +186,6 @@ fun HomeScreen(
                         .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Status Pill + PADLOCK VPN Indicator
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = accentColor.copy(alpha = 0.14f),
@@ -218,7 +218,6 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Center Padlock + VPN Power Core
                     Box(
                         modifier = Modifier
                             .size(164.dp)
@@ -239,7 +238,7 @@ fun HomeScreen(
                                     style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
                                 )
                                 drawArc(
-                                    color = MaterialTheme.colorScheme.tertiary,
+                                    color = tertiaryColor,
                                     startAngle = 180f,
                                     sweepAngle = 100f,
                                     useCenter = false,
@@ -291,7 +290,7 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // LIVE PING BUTTON ON HOMEPAGE (ONLY ENABLED WHEN CONNECTED AND WORKING)
+                    // LIVE PING BUTTON ON HOMEPAGE (ONLY ENABLED WHEN CONNECTED)
                     Button(
                         onClick = onPingClick,
                         enabled = isConnected && !isPinging,
@@ -471,4 +470,3 @@ private fun formatBytes(bytes: Long): String {
         else -> "$bytes B"
     }
 }
-// === END OF FILE 14 ===
