@@ -48,11 +48,12 @@ object SshEngine {
     private var localServer: ServerSocket? = null
     private val activeBridges = CopyOnWriteArrayList<ServerSocket>()
     private val activeUdpSockets = CopyOnWriteArrayList<DatagramSocket>()
-    private val ioThreadPool = Executors.newFixedThreadPool(24)
+    // Dedicated cached thread pool prevents thread pool starvation deadlocks
+    private val ioThreadPool = Executors.newCachedThreadPool()
     private val tlsPorts = setOf(443, 8443, 2053, 2083, 2087, 2096)
 
     private fun socketBufSize(): Int =
-        if (VpnStateBridge.turboSpeedEnabled.value) 1048576 else 524288
+        if (VpnStateBridge.turboSpeedEnabled.value) 524288 else 262144
 
     private fun buildAndroidSafeSshConfig(isSlowDns: Boolean): DefaultConfig {
         try {
@@ -232,32 +233,6 @@ object SshEngine {
                 sshPool.add(primaryClient)
                 isRunning = true
                 startLocalSocks5Server("127.0.0.1", localPort)
-
-                if (VpnStateBridge.turboSpeedEnabled.value) {
-                    ioThreadPool.execute {
-                        try {
-                            if (!isRunning) return@execute
-                            val secondary = createConnectedSshClient(
-                                mode = mode,
-                                cleanHost = cleanHost,
-                                port = port,
-                                cleanUser = cleanUser,
-                                pass = pass,
-                                payloadTemplate = payloadTemplate,
-                                sni = sni,
-                                proxyHost = proxyHost,
-                                proxyPort = proxyPort,
-                                proxyAuth = proxyAuth,
-                                proxyUser = proxyUser,
-                                proxyPass = proxyPass,
-                                tlsVersion = tlsVersion,
-                                isSlowDns = isSlowDns,
-                                emitUiLogs = false
-                            )
-                            if (secondary != null && isRunning) sshPool.add(secondary) else secondary?.close()
-                        } catch (_: Throwable) {}
-                    }
-                }
                 true
             } else {
                 VpnStateBridge.addLog("Authentication failed.")
@@ -266,15 +241,7 @@ object SshEngine {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "SSH Error: ${t.message}")
-            val msg = t.message ?: ""
-            if (msg.contains("Exhausted available authentication", true) ||
-                msg.contains("Auth fail", true) ||
-                msg.contains("UserAuthException", true)
-            ) {
-                VpnStateBridge.addLog("Authentication failed: Invalid username or password.")
-            } else {
-                VpnStateBridge.addLog("Connection failed.")
-            }
+            VpnStateBridge.addLog("Connection failed.")
             stopSshTunnel()
             false
         }
@@ -501,7 +468,7 @@ object SshEngine {
             try {
                 localServer = ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(bindHost, localPort), 256)
+                    bind(InetSocketAddress(bindHost, localPort), 512)
                 }
                 while (isRunning) {
                     val client = localServer?.accept() ?: break
@@ -512,7 +479,7 @@ object SshEngine {
     }
 
     private fun openSshForwardSocket(targetHost: String, targetPort: Int): Pair<ServerSocket, Socket> {
-        val bridgeServer = ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
+        val bridgeServer = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val bridgePort = bridgeServer.localPort
         activeBridges.add(bridgeServer)
 
