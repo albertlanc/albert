@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.albert.smartvpn"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
         versionCode = 351
         versionName = "3.5.1"
