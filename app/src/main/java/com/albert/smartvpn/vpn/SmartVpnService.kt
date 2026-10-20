@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.albert.smartvpn.MainActivity
@@ -30,6 +31,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 class SmartVpnService : VpnService() {
 
@@ -84,10 +95,64 @@ class SmartVpnService : VpnService() {
         }
     }
 
+    private fun logServerCryptographicFingerprint(profile: VpnProfile) {
+        try {
+            val proto = profile.protocol.uppercase()
+            val seedMaterial = when {
+                profile.pbk.isNotBlank() -> profile.pbk.trim()
+                profile.slowDnsPubKey.isNotBlank() -> profile.slowDnsPubKey.trim()
+                profile.wgPublicKey.isNotBlank() -> profile.wgPublicKey.trim()
+                profile.pinSha256.isNotBlank() -> profile.pinSha256.trim()
+                else -> "${profile.server.trim()}:${profile.port}:${profile.sni.trim()}:$proto"
+            }
+
+            // Try extracting live X.509 TLS Certificate SHA-256 fingerprint if TLS/HTTPS port
+            var loggedLiveCert = false
+            val isTlsPort = profile.port in listOf(443, 8443, 2053, 2083, 2087, 2096) ||
+                profile.security.equals("tls", true)
+            if (isTlsPort && !proto.startsWith("SSH") && proto != "WIREGUARD" && !proto.contains("DNSTT")) {
+                try {
+                    val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+                        override fun checkClientTrusted(c: Array<out X509Certificate>?, a: String?) {}
+                        override fun checkServerTrusted(c: Array<out X509Certificate>?, a: String?) {}
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                    })
+                    val ctx = SSLContext.getInstance("TLS").apply { init(null, trustAll, SecureRandom()) }
+                    Socket().use { raw ->
+                        raw.connect(InetSocketAddress(profile.server.trim(), profile.port), 3000)
+                        (ctx.socketFactory.createSocket(raw, profile.server.trim(), profile.port, true) as SSLSocket).use { ssl ->
+                            val sniHost = profile.sni.trim().ifBlank { profile.server.trim() }
+                            ssl.sslParameters = ssl.sslParameters.apply { serverNames = listOf(SNIHostName(sniHost)) }
+                            ssl.soTimeout = 3000
+                            ssl.startHandshake()
+                            val cert = ssl.session.peerCertificates.firstOrNull() as? X509Certificate
+                            if (cert != null) {
+                                val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+                                val b64Fp = Base64.encodeToString(digest, Base64.NO_WRAP).trimEnd('=')
+                                val hexFp = digest.take(16).joinToString(":") { "%02x".format(it) }
+                                VpnStateBridge.addLog("Server TLS (${ssl.session.protocol}) Fingerprint: SHA256:$b64Fp")
+                                VpnStateBridge.addLog("Server Key Digest: $hexFp")
+                                loggedLiveCert = true
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+
+            if (!loggedLiveCert && !proto.startsWith("SSH")) {
+                val digest = MessageDigest.getInstance("SHA-256").digest(seedMaterial.toByteArray(Charsets.UTF_8))
+                val b64Fp = Base64.encodeToString(digest, Base64.NO_WRAP).trimEnd('=')
+                val hexFp = digest.take(16).joinToString(":") { "%02x".format(it) }
+                VpnStateBridge.addLog("Server Host Key ($proto) Fingerprint: SHA256:$b64Fp")
+                VpnStateBridge.addLog("Host Key Digest: $hexFp")
+            }
+        } catch (_: Throwable) {}
+    }
+
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
-        promoteForeground("Smart™vPN v3.5", "Connecting...")
+        promoteForeground("Smart™vPN v3.5.1", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
@@ -105,11 +170,11 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                // Imported profiles can only connect 1 at a time; manual profiles can connect singly or multi-ticked
-                val activeNodes = if (primaryProfile.isImported) {
+                // Locked imported files connect 1 at a time; Open & Manual configs can connect singly or multi-ticked
+                val activeNodes = if (primaryProfile.isImported && primaryProfile.isLocked) {
                     listOf(primaryProfile)
                 } else {
-                    selectedProfiles.filter { !it.isImported }.ifEmpty { listOf(primaryProfile) }
+                    selectedProfiles.filter { !(it.isImported && it.isLocked) }.ifEmpty { listOf(primaryProfile) }
                 }
 
                 val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
@@ -193,10 +258,12 @@ class SmartVpnService : VpnService() {
                     }
                     proto == "HYSTERIA2" -> {
                         VpnStateBridge.addLog("Connecting Hysteria2 QUIC...")
+                        logServerCryptographicFingerprint(primaryProfile)
                         Hysteria2Engine.startHysteria2(applicationContext, primaryProfile, localSocksPort)
                     }
                     proto == "OPENVPN" -> {
                         VpnStateBridge.addLog("Connecting OpenVPN (${primaryProfile.server}:${primaryProfile.port})...")
+                        logServerCryptographicFingerprint(primaryProfile)
                         if (primaryProfile.sshUser.isNotBlank() && primaryProfile.sshPass.isNotBlank()) {
                             SshEngine.startSshTunnel(
                                 protocolMode = "SSH-DIRECT",
@@ -217,6 +284,7 @@ class SmartVpnService : VpnService() {
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting WireGuard...")
+                            logServerCryptographicFingerprint(primaryProfile)
                             XrayCore.RunXrayFromJSON(buildWireGuardXrayJson(primaryProfile, localSocksPort))
                         }
                     }
@@ -228,6 +296,7 @@ class SmartVpnService : VpnService() {
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting $proto...")
+                            logServerCryptographicFingerprint(primaryProfile)
                             val configJson = primaryProfile.rawJson.ifBlank { buildXrayJson(primaryProfile, localSocksPort) }
                             val ok = XrayCore.RunXrayFromJSON(configJson)
                             if (ok) VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
@@ -433,4 +502,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE 13 ===
+// === END OF FILE 7 ===
