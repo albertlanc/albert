@@ -29,7 +29,7 @@ object VpnConfigParser {
     }
 
     fun toStandardUri(profile: VpnProfile): String {
-        if (profile.isImported) return ""
+        if (profile.isLocked || profile.isImported) return ""
         val encName = URLEncoder.encode(profile.name, "UTF-8")
         return when (profile.protocol.uppercase()) {
             "TROJAN" -> "trojan://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
@@ -48,7 +48,7 @@ object VpnConfigParser {
     }
 
     fun toStandardJson(profile: VpnProfile): String {
-        if (profile.isImported) return ""
+        if (profile.isLocked || profile.isImported) return ""
         return if (profile.rawJson.isNotBlank()) profile.rawJson else prettyGson.toJson(profile)
     }
 
@@ -77,24 +77,29 @@ object VpnConfigParser {
         } catch (_: Throwable) {
             null
         }
-        return parsed?.copy(isImported = true)
+        // Open URIs/configs imported via clipboard/file are unlocked (isLocked = false, isImported = false)
+        // so the user can edit them, lock them, and share them!
+        return parsed?.copy(isImported = false, isLocked = false)
     }
 
     private fun parseRawJsonProfile(jsonText: String): VpnProfile? {
         return try {
             val obj = JsonParser.parseString(jsonText).asJsonObject
             if (obj.has("protocol") && obj.has("server")) {
-                prettyGson.fromJson(jsonText, VpnProfile::class.java)?.copy(id = 0, isSelected = true, isImported = true)
+                val p = prettyGson.fromJson(jsonText, VpnProfile::class.java)
+                val locked = p?.isLocked == true
+                p?.copy(id = 0, isSelected = true, isImported = locked, isLocked = locked)
             } else {
                 VpnProfile(
-                    name = "Imported JSON Config",
+                    name = "Open JSON Config",
                     protocol = "VMESS",
                     server = "json-config",
                     port = 443,
                     uuid = "json",
                     rawJson = jsonText,
                     isSelected = true,
-                    isImported = true
+                    isImported = false,
+                    isLocked = false
                 )
             }
         } catch (_: Throwable) {
@@ -108,7 +113,7 @@ object VpnConfigParser {
         val host = uri.host?.trim() ?: return null
         val port = if (uri.port > 0) uri.port else 443
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "Imported $protocol"
+            ?: "$protocol-$host"
 
         val securityParam = uri.getQueryParameter("security")?.lowercase()
             ?: if (port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)) "none" else "tls"
@@ -146,7 +151,8 @@ object VpnConfigParser {
             path = pathParam,
             countryFlag = detectFlag(host, remark),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -159,7 +165,7 @@ object VpnConfigParser {
         val host = obj.get("add")?.asString?.trim() ?: return null
         val port = obj.get("port")?.asString?.toIntOrNull() ?: 443
         val uuid = obj.get("id")?.asString?.trim() ?: return null
-        val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "Imported VMESS"
+        val name = obj.get("ps")?.asString?.takeIf { it.isNotBlank() } ?: "VMESS-$host"
         val net = obj.get("net")?.asString?.lowercase() ?: "ws"
         val tlsField = obj.get("tls")?.asString?.lowercase() ?: ""
         val security = if (tlsField == "tls" || (port == 443 && tlsField != "none")) "tls" else "none"
@@ -182,13 +188,14 @@ object VpnConfigParser {
             path = path,
             countryFlag = detectFlag(host, name),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
     private fun parseShadowsocks(uriString: String): VpnProfile? {
         val raw = uriString.removePrefix("ss://").removePrefix("SS://")
-        val remark = if (raw.contains("#")) URLDecoder.decode(raw.substringAfter("#"), "UTF-8") else "Imported SHADOWSOCKS"
+        val remark = if (raw.contains("#")) URLDecoder.decode(raw.substringAfter("#"), "UTF-8") else "SHADOWSOCKS"
         val mainPart = raw.substringBefore("#")
         val decoded = if (!mainPart.contains("@")) {
             String(Base64.decode(mainPart, Base64.DEFAULT), Charsets.UTF_8)
@@ -216,7 +223,8 @@ object VpnConfigParser {
             ssMethod = method,
             countryFlag = detectFlag(host, remark),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -231,7 +239,7 @@ object VpnConfigParser {
         val host = uri.host?.trim() ?: return null
         val port = if (uri.port > 0) uri.port else 443
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "Imported HYSTERIA2"
+            ?: "HYSTERIA2-$host"
 
         val sni = uri.getQueryParameter("sni")
             ?: uri.getQueryParameter("peer")
@@ -261,7 +269,8 @@ object VpnConfigParser {
             hy2DownMbps = downMbps,
             countryFlag = detectFlag(host, remark),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -275,7 +284,7 @@ object VpnConfigParser {
         val dnsIp = uri.getQueryParameter("dns") ?: "8.8.8.8:53"
         val pubKey = uri.getQueryParameter("pubkey") ?: ""
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "Imported SSH-DNSTT"
+            ?: "SSH-DNSTT-$nsDomain"
 
         return VpnProfile(
             name = remark,
@@ -293,7 +302,8 @@ object VpnConfigParser {
             pbk = pubKey,
             countryFlag = detectFlag(nsDomain, remark),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -313,7 +323,7 @@ object VpnConfigParser {
             else -> "SSH-DIRECT"
         }
         val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "Imported $mode"
+            ?: "$mode-$host"
 
         return VpnProfile(
             name = remark,
@@ -328,7 +338,8 @@ object VpnConfigParser {
             security = if (port == 443 || mode.contains("TLS")) "tls" else "none",
             countryFlag = detectFlag(host, remark),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -365,7 +376,7 @@ object VpnConfigParser {
         if (endpointHost.isEmpty() || privateKey.isEmpty() || publicKey.isEmpty()) return null
 
         return VpnProfile(
-            name = "Imported WIREGUARD",
+            name = "WIREGUARD-$endpointHost",
             protocol = "WIREGUARD",
             server = endpointHost,
             port = endpointPort,
@@ -380,7 +391,8 @@ object VpnConfigParser {
             wgMtu = mtu,
             countryFlag = detectFlag(endpointHost, "WireGuard"),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 
@@ -397,13 +409,14 @@ object VpnConfigParser {
         }
         if (host.isEmpty()) return null
         return VpnProfile(
-            name = "Imported OPENVPN",
+            name = "OPENVPN-$host",
             protocol = "OPENVPN",
             server = host,
             port = port,
             countryFlag = detectFlag(host, "OpenVPN"),
             isSelected = true,
-            isImported = true
+            isImported = false,
+            isLocked = false
         )
     }
 }
