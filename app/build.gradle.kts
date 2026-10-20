@@ -16,8 +16,8 @@ android {
         applicationId = "com.albert.smartvpn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 300
-        versionName = "3.0.0"
+        versionCode = 350
+        versionName = "3.5.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
