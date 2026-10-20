@@ -32,14 +32,6 @@ android {
                 "proguard-rules.pro"
             )
         }
-        debug {
-            applicationVariants.all {
-                outputs.all {
-                    val outputImpl = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
-                    outputImpl?.outputFileName = "SmartVPN-v3.5.1.apk"
-                }
-            }
-        }
     }
 
     compileOptions {
