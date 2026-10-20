@@ -2,6 +2,7 @@ package com.albert.smartvpn.ui.screens
 
 import android.net.TrafficStats
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,17 +38,20 @@ import kotlinx.coroutines.delay
 fun HomeScreen(
     isConnected: Boolean,
     activeProfile: VpnProfile?,
+    selectedCount: Int = 1,
     onToggleConnection: () -> Unit,
     onPingClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val connectionState by VpnStateBridge.connectionState.collectAsState()
-    val statusMessage by VpnStateBridge.statusMessage.collectAsState()
     val connectedSinceMs by VpnStateBridge.connectedSinceMs.collectAsState()
     val loadBalancingEnabled by VpnStateBridge.loadBalancingEnabled.collectAsState()
     val turboSpeedEnabled by VpnStateBridge.turboSpeedEnabled.collectAsState()
+    val pingResultText by VpnStateBridge.pingResultText.collectAsState()
+    val isPinging by VpnStateBridge.isPinging.collectAsState()
     val toastMessage by VpnStateBridge.toastMessage.collectAsState()
 
+    var elapsedSec by remember { mutableLongStateOf(0L) }
     var totalBytesRx by remember { mutableLongStateOf(0L) }
     var totalBytesTx by remember { mutableLongStateOf(0L) }
     var rxSpeedText by remember { mutableStateOf("0 B/s") }
@@ -58,6 +62,7 @@ fun HomeScreen(
         var lastTx = TrafficStats.getTotalTxBytes()
         while (true) {
             if (isConnected && connectedSinceMs > 0L) {
+                elapsedSec = (System.currentTimeMillis() - connectedSinceMs) / 1000L
                 val nowRx = TrafficStats.getTotalRxBytes()
                 val nowTx = TrafficStats.getTotalTxBytes()
                 val deltaRx = (nowRx - lastRx).coerceAtLeast(0L)
@@ -69,6 +74,7 @@ fun HomeScreen(
                 rxSpeedText = formatRate(deltaRx)
                 txSpeedText = formatRate(deltaTx)
             } else {
+                elapsedSec = 0L
                 rxSpeedText = "0 B/s"
                 txSpeedText = "0 B/s"
                 lastRx = TrafficStats.getTotalRxBytes()
@@ -78,16 +84,23 @@ fun HomeScreen(
         }
     }
 
-    val accentColor = MaterialTheme.colorScheme.primary
+    val timerText = remember(elapsedSec) {
+        val h = elapsedSec / 3600
+        val m = (elapsedSec % 3600) / 60
+        val s = elapsedSec % 60
+        "%02d:%02d:%02d".format(h, m, s)
+    }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "ReactorRings")
-    val outerAngle by infiniteTransition.animateFloat(
+    val accentColor = if (isConnected) Color(0xFF00E676) else MaterialTheme.colorScheme.primary
+
+    val infiniteTransition = rememberInfiniteTransition(label = "SmartV35Core")
+    val orbitAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isConnected) 3600 else 12000, easing = LinearEasing)
+            animation = tween(durationMillis = if (isConnected) 3200 else 10000, easing = LinearEasing)
         ),
-        label = "OuterRing"
+        label = "Orbit"
     )
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -98,20 +111,20 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. TOP HEADER BAR: Load Balancing Switch + 🚀 Turbo Pill Toggle
+            // 1. REDESIGNED EXECUTIVE TOP COMMAND BAR (Load Balancing + 🚀 Turbo)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(16.dp)),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                    .border(1.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -122,88 +135,251 @@ fun HomeScreen(
                             modifier = Modifier.scale(0.8f)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Load Balancing",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Column {
+                            Text(
+                                text = "Load Balancing",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (selectedCount > 1) "$selectedCount Manual Nodes Ticked" else "Multi-Node Engine",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(
-                                if (turboSpeedEnabled) Color(0xFF0B253A)
-                                else MaterialTheme.colorScheme.surface
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (turboSpeedEnabled) Color(0xFF00E5FF) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                                shape = RoundedCornerShape(20.dp)
-                            )
-                            .clickable { VpnStateBridge.turboSpeedEnabled.value = !turboSpeedEnabled }
-                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (turboSpeedEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, if (turboSpeedEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
+                        modifier = Modifier.clickable { VpnStateBridge.turboSpeedEnabled.value = !turboSpeedEnabled }
                     ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "🚀 Turbo",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (turboSpeedEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. REDESIGNED SMART v3.5 PADLOCK + "VPN" COMMAND REACTOR DECK
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.5.dp, accentColor.copy(alpha = 0.55f), RoundedCornerShape(26.dp)),
+                shape = RoundedCornerShape(26.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Status Pill + PADLOCK VPN Indicator
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = accentColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isConnected) Icons.Default.Lock else Icons.Default.LockOpen,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = when (connectionState) {
+                                    "CONNECTED" -> "PADLOCK SECURED • VPN ACTIVE"
+                                    "CONNECTING" -> "ESTABLISHING VPN TUNNEL..."
+                                    else -> "VPN STANDBY • TAP TO CONNECT"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = accentColor,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Center Padlock + VPN Power Core
+                    Box(
+                        modifier = Modifier
+                            .size(164.dp)
+                            .clickable { onToggleConnection() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            drawCircle(
+                                color = accentColor.copy(alpha = 0.2f),
+                                style = Stroke(width = 3.dp.toPx())
+                            )
+                            rotate(orbitAngle) {
+                                drawArc(
+                                    color = accentColor,
+                                    startAngle = 0f,
+                                    sweepAngle = 100f,
+                                    useCenter = false,
+                                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawArc(
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    startAngle = 180f,
+                                    sweepAngle = 100f,
+                                    useCenter = false,
+                                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(128.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(
+                                            accentColor.copy(alpha = 0.28f),
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                    )
+                                )
+                                .border(2.dp, accentColor, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = if (isConnected) Icons.Default.Lock else Icons.Default.PowerSettingsNew,
+                                    contentDescription = "VPN Toggle",
+                                    tint = accentColor,
+                                    modifier = Modifier.size(38.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (isConnected) "🔒 VPN" else "CONNECT",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = accentColor,
+                                    letterSpacing = 1.2.sp
+                                )
+                                Text(
+                                    text = timerText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // LIVE PING BUTTON ON HOMEPAGE (ONLY ENABLED WHEN CONNECTED AND WORKING)
+                    Button(
+                        onClick = onPingClick,
+                        enabled = isConnected && !isPinging,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = "Ping Tunnel",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "🚀 Turbo",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (turboSpeedEnabled) Color(0xFF00E5FF) else MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (isConnected) {
+                                if (isPinging) "Pinging Active Tunnel..." else pingResultText
+                            } else {
+                                "PING CONNECTION (ACTIVE WHEN CONNECTED)"
+                            },
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
                         )
                     }
                 }
             }
 
-            // 2. ACTIVE PROFILE CARD (Country Flag ONLY shown when a configuration is loaded)
+            // 3. ACTIVE CONFIGURATION NODE CARD (Country Flag ONLY shown when a configuration is loaded)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.75f), RoundedCornerShape(18.dp)),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
-                )
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 20.dp, horizontal = 16.dp),
+                        .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (activeProfile != null) {
-                        Text(
-                            text = activeProfile.countryFlag,
-                            fontSize = 32.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = activeProfile.name.uppercase(),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}",
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(activeProfile.countryFlag, fontSize = 28.sp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = if (selectedCount > 1 && !activeProfile.isImported) {
+                                        "${activeProfile.name.uppercase()} (+${selectedCount - 1} LINKED)"
+                                    } else {
+                                        activeProfile.name.uppercase()
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if (activeProfile.isImported) {
+                                        "${activeProfile.protocol.uppercase()} • IMPORTED VAULT (LOCKED)"
+                                    } else {
+                                        "${activeProfile.protocol.uppercase()} • ${activeProfile.server}:${activeProfile.port}"
+                                    },
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     } else {
                         Text(
                             text = "NO CONFIGURATION LOADED",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tap + or Configs tab to import or create a configuration",
+                            text = "Import a config or create a Manual Configuration to display server & country flag",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                             textAlign = TextAlign.Center
@@ -212,168 +388,45 @@ fun HomeScreen(
                 }
             }
 
-            // 3. STATUS HEADER & DIVIDER
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = when (connectionState) {
-                        "CONNECTED" -> "CONNECTED"
-                        "CONNECTING" -> "CONNECTING..."
-                        else -> "NOT CONNECTED"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = when (connectionState) {
-                        "CONNECTED" -> Color(0xFF00E676)
-                        "CONNECTING" -> Color(0xFFFFB300)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    },
-                    letterSpacing = 1.5.sp
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Divider(
-                    modifier = Modifier.fillMaxWidth(0.75f),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Total Usage: ${formatBytes(totalBytesRx + totalBytesTx)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // 4. UPLINK & DOWNLINK METRICS ROW
+            // 4. TELEMETRY DECK: UPLINK, DOWNLINK & TOTAL USAGE
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(horizontalAlignment = Alignment.Start) {
-                    Text(
-                        text = "Uplink",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = txSpeedText,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = formatBytes(totalBytesTx),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Downlink",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = rxSpeedText,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = formatBytes(totalBytesRx),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // 5. LARGE DOUBLE-RING CIRCULAR CONNECT BUTTON
-            Box(
-                modifier = Modifier
-                    .size(176.dp)
-                    .clickable { onToggleConnection() },
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawCircle(
-                        color = accentColor.copy(alpha = 0.35f),
-                        style = Stroke(width = 2.dp.toPx())
-                    )
-                    if (isConnected || connectionState == "CONNECTING") {
-                        rotate(outerAngle) {
-                            drawArc(
-                                color = if (isConnected) Color(0xFF00E676) else accentColor,
-                                startAngle = 0f,
-                                sweepAngle = 110f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = if (isConnected) Color(0xFF00E676) else accentColor,
-                                startAngle = 180f,
-                                sweepAngle = 110f,
-                                useCenter = false,
-                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size(144.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.surfaceVariant,
-                                    MaterialTheme.colorScheme.surface
-                                )
-                            )
-                        )
-                        .border(
-                            width = 2.dp,
-                            color = if (isConnected) Color(0xFF00E676) else accentColor.copy(alpha = 0.65f),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.PowerSettingsNew,
-                            contentDescription = "Connect",
-                            tint = if (isConnected) Color(0xFF00E676) else Color.White,
-                            modifier = Modifier.size(38.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = when (connectionState) {
-                                "CONNECTED" -> "CONNECTED"
-                                "CONNECTING" -> "WAIT..."
-                                else -> "CONNECT"
-                            },
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isConnected) Color(0xFF00E676) else Color.White,
-                            letterSpacing = 1.sp
-                        )
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("⬆️ UPLINK", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(txSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                        Text("Sent: ${formatBytes(totalBytesTx)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("⬇️ DOWNLINK", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(rxSpeedText, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                        Text("Received: ${formatBytes(totalBytesRx)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
+
+            Text(
+                text = "Total Session Usage: ${formatBytes(totalBytesRx + totalBytesTx)}",
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         if (toastMessage.isNotEmpty()) {
@@ -386,7 +439,7 @@ fun HomeScreen(
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                     shadowElevation = 8.dp
                 ) {
                     Text(
@@ -418,3 +471,4 @@ private fun formatBytes(bytes: Long): String {
         else -> "$bytes B"
     }
 }
+// === END OF FILE 14 ===
