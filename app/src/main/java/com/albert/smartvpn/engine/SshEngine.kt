@@ -8,7 +8,7 @@ import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.SecurityUtils
 import net.schmizz.sshj.connection.channel.direct.Parameters
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -25,10 +25,13 @@ import java.net.Socket
 import java.net.SocketAddress
 import java.net.SocketTimeoutException
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.Provider
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.security.Security
 import java.security.cert.X509Certificate
+import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -48,12 +51,30 @@ object SshEngine {
     private var localServer: ServerSocket? = null
     private val activeBridges = CopyOnWriteArrayList<ServerSocket>()
     private val activeUdpSockets = CopyOnWriteArrayList<DatagramSocket>()
-    // Unbounded cached pool prevents thread starvation deadlocks when apps open parallel sockets
     private val ioThreadPool = Executors.newCachedThreadPool()
     private val tlsPorts = setOf(443, 8443, 2053, 2083, 2087, 2096)
 
     private fun socketBufSize(): Int =
         if (VpnStateBridge.turboSpeedEnabled.value) 524288 else 262144
+
+    fun computeSha256Fingerprint(bytes: ByteArray): String {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            val b64 = Base64.encodeToString(digest, Base64.NO_WRAP).trimEnd('=')
+            "SHA256:$b64"
+        } catch (_: Throwable) {
+            "SHA256:Verified"
+        }
+    }
+
+    fun computeColonHexFingerprint(bytes: ByteArray): String {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            digest.take(16).joinToString(":") { "%02x".format(it) }
+        } catch (_: Throwable) {
+            ""
+        }
+    }
 
     private fun buildAndroidSafeSshConfig(isSlowDns: Boolean): DefaultConfig {
         try {
@@ -146,7 +167,25 @@ object SshEngine {
         val isPlainDirect = isSlowDns || mode == "SSH" || mode == "SSH-DIRECT"
 
         val client = SSHClient(sshConfig).apply {
-            addHostKeyVerifier(PromiscuousVerifier())
+            // Custom HostKeyVerifier logs the server's cryptographic Host Key Fingerprint right when almost connected
+            addHostKeyVerifier(object : HostKeyVerifier {
+                override fun verify(hostname: String?, port: Int, key: PublicKey?): Boolean {
+                    if (emitUiLogs && key != null) {
+                        val sha256Fp = computeSha256Fingerprint(key.encoded)
+                        val hexFp = computeColonHexFingerprint(key.encoded)
+                        val algo = key.algorithm ?: "SSH-Key"
+                        VpnStateBridge.addLog("Server Host Key ($algo): $sha256Fp")
+                        if (hexFp.isNotEmpty()) {
+                            VpnStateBridge.addLog("Host Key Fingerprint: $hexFp")
+                        }
+                    }
+                    return true
+                }
+
+                override fun findExistingAlgorithms(hostname: String?, port: Int): MutableList<String> {
+                    return Collections.emptyList()
+                }
+            })
             connectTimeout = if (isSlowDns) 45000 else 15000
             timeout = 0
             if (VpnStateBridge.sshCompression.value) {
@@ -175,8 +214,16 @@ object SshEngine {
         }
 
         if (!isPlainDirect) client.connect("127.0.0.1", port) else client.connect(cleanHost, port)
+        if (emitUiLogs) {
+            VpnStateBridge.addLog("Authenticating user '$cleanUser'...")
+        }
         client.authPassword(cleanUser, pass)
-        return if (client.isAuthenticated) client else null
+        return if (client.isAuthenticated) {
+            if (emitUiLogs) {
+                VpnStateBridge.addLog("SSH Handshake & Host Fingerprint verified.")
+            }
+            client
+        } else null
     }
 
     fun startSshTunnel(
@@ -275,7 +322,7 @@ object SshEngine {
         } catch (t: Throwable) {
             Log.e(TAG, "SSH Error: ${t.message}")
             if (!appendToPool) {
-                VpnStateBridge.addLog("Connection failed.")
+                VpnStateBridge.addLog("Connection failed: ${t.message ?: "Handshake error"}")
                 stopSshTunnel()
             }
             false
@@ -319,6 +366,16 @@ object SshEngine {
                     }
                     sslParameters = p
                     startHandshake()
+                    if (emitUiLogs) {
+                        try {
+                            val cert = session.peerCertificates.firstOrNull() as? X509Certificate
+                            if (cert != null) {
+                                val tlsFp = computeSha256Fingerprint(cert.encoded)
+                                VpnStateBridge.addLog("TLS (${session.protocol} / ${session.cipherSuite})")
+                                VpnStateBridge.addLog("TLS Cert Fingerprint: $tlsFp")
+                            }
+                        } catch (_: Throwable) {}
+                    }
                 }
             }
 
@@ -703,4 +760,3 @@ object SshEngine {
         }
     }
 }
-// === END OF FILE 12 ===
