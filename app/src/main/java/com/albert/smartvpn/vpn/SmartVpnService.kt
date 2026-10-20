@@ -52,7 +52,7 @@ class SmartVpnService : VpnService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
     private var activeConnectJob: Job? = null
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var connectedProfileSnapshot: VpnProfile? = null
+    private var connectedProfilesSnapshot = listOf<VpnProfile>()
 
     override fun onCreate() {
         super.onCreate()
@@ -87,26 +87,34 @@ class SmartVpnService : VpnService() {
     private fun startVpnPipeline() {
         VpnStateBridge.hasShownSplash = true
         VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
-        promoteForeground("Smart v3", "Connecting...")
+        promoteForeground("Smart™vPN v3.5", "Connecting...")
 
         activeConnectJob?.cancel()
         activeConnectJob = serviceScope.launch {
             try {
                 val dao = AppDatabase.getDatabase(applicationContext).profileDao()
-                val profile = dao.getSelectedProfile()
+                val selectedProfiles = dao.getSelectedProfiles()
+                val primaryProfile = selectedProfiles.firstOrNull()
+                    ?: dao.getSelectedProfile()
                     ?: dao.getAllProfiles().firstOrNull()?.firstOrNull()
 
-                if (profile == null) {
+                if (primaryProfile == null) {
                     VpnStateBridge.addLog("No profile selected.")
                     VpnStateBridge.updateState("DISCONNECTED", "NOT CONNECTED")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
-                // Check HWID Lock & Root Restriction
+                // Imported profiles can only connect 1 at a time; manual profiles can connect singly or multi-ticked
+                val activeNodes = if (primaryProfile.isImported) {
+                    listOf(primaryProfile)
+                } else {
+                    selectedProfiles.filter { !it.isImported }.ifEmpty { listOf(primaryProfile) }
+                }
+
                 val myDeviceId = VpnStateBridge.getDeviceHardwareId(applicationContext)
-                if (profile.lockedDeviceId.isNotBlank()) {
-                    val allowedIds = profile.lockedDeviceId.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+                if (primaryProfile.lockedDeviceId.isNotBlank()) {
+                    val allowedIds = primaryProfile.lockedDeviceId.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
                     if (allowedIds.isNotEmpty() && myDeviceId.uppercase() !in allowedIds) {
                         VpnStateBridge.addLog("HWID Lock Rejected: Unauthorized device ($myDeviceId).")
                         VpnStateBridge.updateState("DISCONNECTED", "HWID LOCKED")
@@ -114,107 +122,113 @@ class SmartVpnService : VpnService() {
                         return@launch
                     }
                 }
-                if (profile.blockRootedDevices && HotshareServer.isDeviceRooted()) {
-                    VpnStateBridge.addLog("Connection rejected: Rooted device blocked by profile policy.")
+                if (primaryProfile.blockRootedDevices && HotshareServer.isDeviceRooted()) {
+                    VpnStateBridge.addLog("Connection rejected: Rooted device blocked.")
                     VpnStateBridge.updateState("DISCONNECTED", "ROOT BLOCKED")
                     stopVpnPipeline(resetStatus = false)
                     return@launch
                 }
 
-                connectedProfileSnapshot = profile
+                connectedProfilesSnapshot = activeNodes
                 val localSocksPort = VpnStateBridge.localSocksPort.value.coerceIn(1025, 65534)
-                val proto = profile.protocol.uppercase()
+                val proto = primaryProfile.protocol.uppercase()
 
                 VpnStateBridge.slowDnsBoostEnabled.value = proto.contains("DNSTT") || proto == "SLOWDNS"
 
                 val engineStarted = when {
                     proto.contains("DNSTT") || proto == "SLOWDNS" -> {
                         val slowDnsPort = 7000
-                        val targetDnsPort = profile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
+                        val targetDnsPort = primaryProfile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
                         val dnsStarted = SlowDnsEngine.startSlowDns(
                             context = applicationContext,
-                            dnsServerIp = profile.slowDnsServerIp.substringBefore(":").ifBlank { "8.8.8.8" },
+                            dnsServerIp = primaryProfile.slowDnsServerIp.substringBefore(":").ifBlank { "8.8.8.8" },
                             dnsPort = targetDnsPort,
-                            nsDomain = profile.slowDnsDomain.ifBlank { profile.server },
-                            pubKey = profile.slowDnsPubKey.ifBlank { profile.pbk },
-                            dnsttMode = profile.dnsttMode,
+                            nsDomain = primaryProfile.slowDnsDomain.ifBlank { primaryProfile.server },
+                            pubKey = primaryProfile.slowDnsPubKey.ifBlank { primaryProfile.pbk },
+                            dnsttMode = primaryProfile.dnsttMode,
                             localPort = slowDnsPort
                         )
                         if (!dnsStarted) false else SshEngine.startSshTunnel(
                             protocolMode = proto,
                             host = "127.0.0.1",
                             port = slowDnsPort,
-                            user = profile.sshUser.ifBlank { profile.uuid },
-                            pass = profile.sshPass,
+                            user = primaryProfile.sshUser.ifBlank { primaryProfile.uuid },
+                            pass = primaryProfile.sshPass,
                             localPort = localSocksPort,
-                            payloadTemplate = profile.payload,
-                            sni = profile.sni,
-                            proxyHost = profile.proxyHost,
-                            proxyPort = profile.proxyPort,
-                            proxyAuth = profile.proxyAuth,
-                            proxyUser = profile.proxyUser,
-                            proxyPass = profile.proxyPass,
-                            tlsVersion = profile.tlsVersion,
+                            payloadTemplate = primaryProfile.payload,
+                            sni = primaryProfile.sni,
+                            proxyHost = primaryProfile.proxyHost,
+                            proxyPort = primaryProfile.proxyPort,
+                            proxyAuth = primaryProfile.proxyAuth,
+                            proxyUser = primaryProfile.proxyUser,
+                            proxyPass = primaryProfile.proxyPass,
+                            tlsVersion = primaryProfile.tlsVersion,
                             isSlowDns = true
                         )
                     }
                     proto.startsWith("SSH") -> {
-                        SshEngine.startSshTunnel(
-                            protocolMode = proto,
-                            host = profile.server,
-                            port = profile.port,
-                            user = profile.sshUser.ifBlank { profile.uuid },
-                            pass = profile.sshPass,
-                            localPort = localSocksPort,
-                            payloadTemplate = profile.payload,
-                            sni = profile.sni,
-                            proxyHost = profile.proxyHost,
-                            proxyPort = profile.proxyPort,
-                            proxyAuth = profile.proxyAuth,
-                            proxyUser = profile.proxyUser,
-                            proxyPass = profile.proxyPass,
-                            tlsVersion = profile.tlsVersion,
-                            isSlowDns = false
-                        )
+                        var anyStarted = false
+                        activeNodes.forEachIndexed { idx, node ->
+                            val ok = SshEngine.startSshTunnel(
+                                protocolMode = node.protocol.uppercase(),
+                                host = node.server,
+                                port = node.port,
+                                user = node.sshUser.ifBlank { node.uuid },
+                                pass = node.sshPass,
+                                localPort = localSocksPort,
+                                payloadTemplate = node.payload,
+                                sni = node.sni,
+                                proxyHost = node.proxyHost,
+                                proxyPort = node.proxyPort,
+                                proxyAuth = node.proxyAuth,
+                                proxyUser = node.proxyUser,
+                                proxyPass = node.proxyPass,
+                                tlsVersion = node.tlsVersion,
+                                isSlowDns = false,
+                                appendToPool = (idx > 0)
+                            )
+                            if (ok) anyStarted = true
+                        }
+                        anyStarted
                     }
                     proto == "HYSTERIA2" -> {
                         VpnStateBridge.addLog("Connecting Hysteria2 QUIC...")
-                        Hysteria2Engine.startHysteria2(applicationContext, profile, localSocksPort)
+                        Hysteria2Engine.startHysteria2(applicationContext, primaryProfile, localSocksPort)
                     }
                     proto == "OPENVPN" -> {
-                        VpnStateBridge.addLog("Connecting OpenVPN (${profile.server}:${profile.port})...")
-                        if (profile.sshUser.isNotBlank() && profile.sshPass.isNotBlank()) {
+                        VpnStateBridge.addLog("Connecting OpenVPN (${primaryProfile.server}:${primaryProfile.port})...")
+                        if (primaryProfile.sshUser.isNotBlank() && primaryProfile.sshPass.isNotBlank()) {
                             SshEngine.startSshTunnel(
                                 protocolMode = "SSH-DIRECT",
-                                host = profile.server,
-                                port = profile.port,
-                                user = profile.sshUser,
-                                pass = profile.sshPass,
+                                host = primaryProfile.server,
+                                port = primaryProfile.port,
+                                user = primaryProfile.sshUser,
+                                pass = primaryProfile.sshPass,
                                 localPort = localSocksPort,
                                 isSlowDns = false
                             )
                         } else {
-                            XrayCore.verifyServerReachable(profile.server, profile.port)
+                            XrayCore.verifyServerReachable(primaryProfile.server, primaryProfile.port)
                         }
                     }
                     proto == "WIREGUARD" -> {
-                        if (profile.wgPrivateKey.isBlank() && profile.uuid.isBlank()) {
-                            VpnStateBridge.addLog("Connection failed: Missing WireGuard private key.")
+                        if (primaryProfile.wgPrivateKey.isBlank() && primaryProfile.uuid.isBlank()) {
+                            VpnStateBridge.addLog("Connection failed: Missing WireGuard key.")
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting WireGuard...")
-                            XrayCore.RunXrayFromJSON(buildWireGuardXrayJson(profile, localSocksPort))
+                            XrayCore.RunXrayFromJSON(buildWireGuardXrayJson(primaryProfile, localSocksPort))
                         }
                     }
                     else -> {
-                        if (profile.uuid.isBlank() && profile.rawJson.isBlank()) {
+                        if (primaryProfile.uuid.isBlank() && primaryProfile.rawJson.isBlank()) {
                             VpnStateBridge.addLog("Connection failed: Missing UUID or password.")
                             false
-                        } else if (profile.rawJson.isBlank() && !XrayCore.verifyServerReachable(profile.server, profile.port)) {
+                        } else if (primaryProfile.rawJson.isBlank() && !XrayCore.verifyServerReachable(primaryProfile.server, primaryProfile.port)) {
                             false
                         } else {
                             VpnStateBridge.addLog("Connecting $proto...")
-                            val configJson = profile.rawJson.ifBlank { buildXrayJson(profile, localSocksPort) }
+                            val configJson = primaryProfile.rawJson.ifBlank { buildXrayJson(primaryProfile, localSocksPort) }
                             val ok = XrayCore.RunXrayFromJSON(configJson)
                             if (ok) VpnStateBridge.addLog("HTTP/1.1 101 Switching Protocols")
                             ok
@@ -233,12 +247,12 @@ class SmartVpnService : VpnService() {
                     HotshareServer.startHotshare(localSocksPort, VpnStateBridge.shareNetPort.value)
                 }
 
-                val primaryDns = profile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
+                val primaryDns = primaryProfile.customDns.trim().ifBlank { VpnStateBridge.customDns1.value }
                 val secondaryDns = VpnStateBridge.customDns2.value.ifBlank { "8.8.8.8" }
 
                 val builder = Builder()
-                    .setSession("Smart v3")
-                    .setMtu(if (proto == "WIREGUARD") profile.wgMtu.coerceIn(1280, 1500) else 1500)
+                    .setSession("Smart™vPN")
+                    .setMtu(if (proto == "WIREGUARD") primaryProfile.wgMtu.coerceIn(1280, 1500) else 1400)
                     .addAddress("10.0.0.2", 24)
                     .addDnsServer(primaryDns)
                     .addDnsServer(secondaryDns)
@@ -258,11 +272,11 @@ class SmartVpnService : VpnService() {
 
                 Tun2Socks.startTunnel(fd, "127.0.0.1", localSocksPort)
                 VpnStateBridge.updateState("CONNECTED", "CONNECTED")
-                VpnStateBridge.addLog("Connected successfully (${profile.name}).")
-                if (profile.customServerMessage.isNotBlank()) {
-                    VpnStateBridge.addLog("Server Message: ${profile.customServerMessage}")
+                VpnStateBridge.addLog("VPN Connected (${activeNodes.size} active node(s)).")
+                if (primaryProfile.customServerMessage.isNotBlank()) {
+                    VpnStateBridge.addLog("Server Message: ${primaryProfile.customServerMessage}")
                 }
-                promoteForeground("Smart v3 • Connected", "Tunnel Active (${profile.name})")
+                promoteForeground("Smart™vPN • LOCKED & ACTIVE", "VPN Tunnel Protected (${primaryProfile.name})")
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN Pipeline error: ${t.message}", t)
                 VpnStateBridge.slowDnsBoostEnabled.value = false
@@ -277,7 +291,6 @@ class SmartVpnService : VpnService() {
         val protocolLower = profile.protocol.lowercase()
         val serverHost = profile.server.trim()
         val rawSni = profile.sni.trim().ifBlank { serverHost }
-        // Support multi-SNI comma separated rotation
         val sniCandidates = rawSni.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         val sniHost = if (profile.autoRotateSni && sniCandidates.size > 1) {
             sniCandidates.random()
@@ -334,13 +347,7 @@ class SmartVpnService : VpnService() {
             else -> "\"wsSettings\": {\"path\": \"$wsPath\", \"host\": \"$wsHostHeader\"}"
         }
 
-        val muxBlock = if (VpnStateBridge.xrayMuxEnabled.value && !isReality && networkType != "grpc") {
-            """, "mux": {"enabled": true, "concurrency": 8}"""
-        } else {
-            ""
-        }
-
-        return """{"log":{"loglevel":"none"},"policy":{"levels":{"0":{"handshake":4,"connIdle":300,"uplinkOnly":1,"downlinkOnly":1,"bufferSize":10240}}},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}$muxBlock}]}"""
+        return """{"log":{"loglevel":"none"},"policy":{"levels":{"0":{"handshake":4,"connIdle":300,"uplinkOnly":1,"downlinkOnly":1,"bufferSize":10240}}},"inbounds":[{"tag":"socks-in","port":$socksPort,"listen":"127.0.0.1","protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"tag":"proxy","protocol":"$protocolLower","settings":{$outboundSettings},"streamSettings":{"network":"$networkType","security":"$securityMode",$securityBlock$transportBlock,"sockopt":{"tcpNoDelay":true}}}]}"""
     }
 
     private fun buildWireGuardXrayJson(profile: VpnProfile, socksPort: Int): String {
@@ -354,9 +361,8 @@ class SmartVpnService : VpnService() {
     private fun stopVpnPipeline(resetStatus: Boolean) {
         activeConnectJob?.cancel()
         VpnStateBridge.slowDnsBoostEnabled.value = false
-        VpnStateBridge.pingResultText.value = "Tap Ping to test active tunnel latency"
-        val snap = connectedProfileSnapshot
-        connectedProfileSnapshot = null
+        val snapList = connectedProfilesSnapshot
+        connectedProfilesSnapshot = emptyList()
 
         serviceScope.launch {
             try {
@@ -369,10 +375,11 @@ class SmartVpnService : VpnService() {
                 vpnInterface?.close()
                 vpnInterface = null
 
-                // Enforce Burn-After-Use (Self-Destruct) on disconnect if enabled on the profile
-                if (snap != null && snap.burnAfterUse) {
-                    AppDatabase.getDatabase(applicationContext).profileDao().deleteProfile(snap)
-                    VpnStateBridge.addLog("Burn-After-Use: Deleted profile '${snap.name}' upon disconnect.")
+                for (snap in snapList) {
+                    if (snap.burnAfterUse) {
+                        AppDatabase.getDatabase(applicationContext).profileDao().deleteProfile(snap)
+                        VpnStateBridge.addLog("Burn-After-Use: Deleted profile '${snap.name}' upon disconnect.")
+                    }
                 }
 
                 if (resetStatus) {
@@ -397,7 +404,7 @@ class SmartVpnService : VpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Smart VPN Status",
+                "Smart™vPN Status",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 setSound(null, null)
@@ -426,3 +433,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
+// === END OF FILE 13 ===
