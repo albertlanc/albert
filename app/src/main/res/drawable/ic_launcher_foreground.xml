@@ -4,23 +4,30 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer Golden-Cyan BBR Ring -->
+    <!-- Outer Golden-Cyan Octagonal Crest -->
     <path
-        android:fillColor="#071330"
-        android:strokeColor="#FFC107"
-        android:strokeWidth="3.5"
-        android:pathData="M54,16 L87,35 L87,73 L54,92 L21,73 L21,35 Z" />
-    <!-- Inner Emerald Shield -->
+        android:fillColor="#081229"
+        android:strokeColor="#FFB300"
+        android:strokeWidth="3.2"
+        android:pathData="M54,18 L84,32 L84,62 C84,78 70,88 54,93 C38,88 24,78 24,62 L24,32 Z" />
+    <!-- Inner Neon Cyan Shield Rim -->
     <path
-        android:fillColor="#0E275C"
+        android:fillColor="#0E224D"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2.2"
+        android:pathData="M54,24 L78,35 L78,60 C78,73 66,81 54,86 C42,81 30,73 30,60 L30,35 Z" />
+    <!-- Padlock Shackle -->
+    <path
+        android:fillColor="#00000000"
         android:strokeColor="#00E676"
-        android:strokeWidth="2.6"
-        android:pathData="M54,24 L79,34 L79,55 C79,71 67,80 54,86 C41,80 29,71 29,55 L29,34 Z" />
-    <!-- BBR High-Speed Rocket / Lightning Core -->
+        android:strokeWidth="4.2"
+        android:pathData="M44,48 L44,39 C44,33.5 48.5,29 54,29 C59.5,29 64,33.5 64,39 L64,48" />
+    <!-- Padlock Body -->
     <path
-        android:fillColor="#00F0FF"
-        android:pathData="M54,31 L67,51 L57,51 L62,75 L41,53 L51,53 Z" />
+        android:fillColor="#FFB300"
+        android:pathData="M39,47 L69,47 C71.2,47 73,48.8 73,51 L73,71 C73,73.2 71.2,75 69,75 L39,75 C36.8,75 35,73.2 35,71 L35,51 C35,48.8 36.8,47 39,47 Z" />
+    <!-- Padlock Keyhole -->
     <path
-        android:fillColor="#FFC107"
-        android:pathData="M54,38 L61,49 L55,49 L58,66 L46,51 L52,51 Z" />
+        android:fillColor="#081229"
+        android:pathData="M54,55 C56.2,55 58,56.8 58,59 C58,60.5 57.2,61.8 56,62.4 L56,69 L52,69 L52,62.4 C50.8,61.8 50,60.5 50,59 C50,56.8 51.8,55 54,55 Z" />
 </vector>
