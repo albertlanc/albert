@@ -24,6 +24,8 @@ data class VpnProfile(
     val path: String = "/",
     val rawJson: String = "",
     val isSelected: Boolean = false,
+    // Strictly tracks whether the profile was imported (Cloud/File/QR/Clipboard) vs Manually Created
+    val isImported: Boolean = false,
     val sshUser: String = "",
     val sshPass: String = "",
     val payload: String = "",
@@ -62,7 +64,7 @@ data class VpnProfile(
     val countryFlag: String = "🇳🇱",
     val lastPingMs: Int = -1,
     val uploadToCloud: Boolean = false,
-    val cloudProvider: String = "Smartv3",
+    val cloudProvider: String = "Smartv3.5",
     val burnAfterFirstImport: Boolean = false,
     val cloudTimeLimit: String = "",
     val cloudTimeUnit: String = "Minutes",
