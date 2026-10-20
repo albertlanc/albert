@@ -13,7 +13,7 @@ object Tun2Socks {
             configFile.writeText(
                 """
                 tunnel:
-                  mtu: 1500
+                  mtu: 1400
                   ipv4: 10.0.0.2
                 socks5:
                   port: $socksPort
@@ -45,4 +45,3 @@ object Tun2Socks {
         }
     }
 }
-// === END OF FILE 6 ===
