@@ -88,7 +88,7 @@ fun ConfigsScreen(
             val active = profiles.firstOrNull { it.isSelected } ?: profiles.firstOrNull()
             when {
                 active == null -> VpnStateBridge.toastMessage.value = "No active configuration to export"
-                active.isImported -> VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+                active.isImported && active.isLocked -> VpnStateBridge.toastMessage.value = "Locked imported configurations cannot be shared or exported"
                 else -> exportingProfile = active
             }
         }
@@ -117,10 +117,10 @@ fun ConfigsScreen(
                     )
                     Text(
                         text = when {
-                            tickedProfiles.size > 1 -> "✓ ${tickedProfiles.size} Manual Configs Ticked (Simultaneous Connect)"
-                            tickedProfiles.firstOrNull()?.isImported == true -> "🔒 1 Imported Config Selected (Single-Tick Mode)"
-                            tickedProfiles.size == 1 -> "✓ 1 Manual Config Ticked (Multi-Tick Available)"
-                            else -> "Tap to tick manual configs or select an imported config"
+                            tickedProfiles.size > 1 -> "✓ ${tickedProfiles.size} Open/Manual Configs Ticked (Simultaneous Connect)"
+                            tickedProfiles.firstOrNull()?.let { it.isImported && it.isLocked } == true -> "🔒 1 Locked Config Selected (Protected Vault)"
+                            tickedProfiles.size == 1 -> "🔓 1 Open Config Selected (Can Lock, Share & Multi-Tick)"
+                            else -> "Tap to tick open configs or select a locked config"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
@@ -159,7 +159,7 @@ fun ConfigsScreen(
                         Text("No configurations saved", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Tap the + button at the top right to import from Clipboard, File, Cloud, QR Code, or create a Manual Configuration.",
+                            text = "Tap the + button at the top right to import an Open or Locked config from Clipboard, File, Cloud, QR Code, or create a Manual Configuration.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -173,6 +173,7 @@ fun ConfigsScreen(
                 ) {
                     items(profiles) { profile: VpnProfile ->
                         val isCurrentlyConnectedProfile = isTunnelBusy && profile.isSelected
+                        val isLockedImport = profile.isImported && profile.isLocked
                         val protoBadge = if (profile.network.isNotBlank() && profile.protocol in listOf("VMESS", "VLESS", "TROJAN")) {
                             "${profile.protocol.uppercase()} (${profile.network.uppercase()})"
                         } else {
@@ -211,7 +212,6 @@ fun ConfigsScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        // Tick control: Manual configs can be multi-ticked; Imported configs single-tick only
                                         Checkbox(
                                             checked = profile.isSelected,
                                             onCheckedChange = {
@@ -232,14 +232,14 @@ fun ConfigsScreen(
 
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
-                                        color = if (profile.isImported) Color(0xFFD97706).copy(alpha = 0.2f) else Color(0xFF00E676).copy(alpha = 0.2f),
-                                        border = BorderStroke(1.dp, if (profile.isImported) Color(0xFFFFB300) else Color(0xFF00E676))
+                                        color = if (isLockedImport) Color(0xFFD97706).copy(alpha = 0.2f) else Color(0xFF00E676).copy(alpha = 0.2f),
+                                        border = BorderStroke(1.dp, if (isLockedImport) Color(0xFFFFB300) else Color(0xFF00E676))
                                     ) {
                                         Text(
-                                            text = if (profile.isImported) "🔒 IMPORTED" else "✓ MANUAL",
+                                            text = if (isLockedImport) "🔒 LOCKED" else "🔓 OPEN",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = if (profile.isImported) Color(0xFFFFB300) else Color(0xFF00E676),
+                                            color = if (isLockedImport) Color(0xFFFFB300) else Color(0xFF00E676),
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
                                     }
@@ -270,8 +270,8 @@ fun ConfigsScreen(
                                         }
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = if (profile.isImported || profile.isLocked) {
-                                                "• [Protected Vault • Single Mode]"
+                                            text = if (isLockedImport) {
+                                                "• [Locked Config • Protected]"
                                             } else {
                                                 "• ${profile.server}:${profile.port}"
                                             },
@@ -294,7 +294,8 @@ fun ConfigsScreen(
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Action Row: Imported configs ONLY allow Ping and Delete (No Export, No Clone, No Edit!)
+                                // Open configs allow Ping, Lock & Share (🔗), Clone (📄), Edit (✏️), Delete (🗑️)
+                                // Locked configs ONLY allow Ping (⚡) and Delete (🗑️)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End,
@@ -304,7 +305,7 @@ fun ConfigsScreen(
                                         Text("⚡", fontSize = 15.sp)
                                     }
 
-                                    if (!profile.isImported) {
+                                    if (!isLockedImport) {
                                         Spacer(modifier = Modifier.width(8.dp))
                                         IconButton(onClick = { shareMenuProfile = profile }, modifier = Modifier.size(34.dp)) {
                                             Text("🔗", fontSize = 15.sp)
@@ -408,17 +409,17 @@ fun ConfigsScreen(
         )
     }
 
-    // Share Menu Dialog (Strictly for Manually Created Profiles Only)
+    // Share & Lock Menu Dialog (Available for all Open & Manually Created Profiles)
     if (shareMenuProfile != null) {
         val target = shareMenuProfile!!
-        if (target.isImported) {
+        if (target.isImported && target.isLocked) {
             shareMenuProfile = null
-            VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+            VpnStateBridge.toastMessage.value = "Locked configurations cannot be shared or exported"
         } else {
-            val manualProfiles = profiles.filter { !it.isImported }
+            val openProfiles = profiles.filter { !(it.isImported && it.isLocked) }
             AlertDialog(
                 onDismissRequest = { shareMenuProfile = null },
-                title = { Text("Share ${target.name}", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("Lock & Share: ${target.name}", fontWeight = FontWeight.ExtraBold) },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -429,39 +430,39 @@ fun ConfigsScreen(
                             shareMenuProfile = null
                             exportingProfile = target
                         }) {
-                            Text("Export Single Config 🔒", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Lock & Export Config (.svpn / Cloud) 🔒", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
                         }
                         TextButton(onClick = {
                             shareMenuProfile = null
-                            if (manualProfiles.size < 2) {
-                                VpnStateBridge.toastMessage.value = "You need at least 2 manually created configurations to create a load balance bundle."
+                            if (openProfiles.size < 2) {
+                                VpnStateBridge.toastMessage.value = "You need at least 2 open configurations to create a load balance bundle."
                             } else {
-                                val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(manualProfiles)
+                                val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(openProfiles)
                                 clipboardManager.setText(AnnotatedString(bundleUri))
-                                VpnStateBridge.toastMessage.value = "Load Balance Bundle copied to clipboard"
+                                VpnStateBridge.toastMessage.value = "Locked Load Balance Bundle copied to clipboard"
                             }
                         }) {
-                            Text("Create Load Balance Bundle ⚖️", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Create Locked Load Balance Bundle ⚖️", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                         TextButton(onClick = {
                             clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardUri(target)))
-                            VpnStateBridge.toastMessage.value = "Copied URI to clipboard"
+                            VpnStateBridge.toastMessage.value = "Copied Open URI to clipboard"
                             shareMenuProfile = null
                         }) {
-                            Text("Copy URI", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Copy Open URI", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                         TextButton(onClick = {
                             clipboardManager.setText(AnnotatedString(VpnConfigParser.toStandardJson(target)))
-                            VpnStateBridge.toastMessage.value = "Copied JSON to clipboard"
+                            VpnStateBridge.toastMessage.value = "Copied Open JSON to clipboard"
                             shareMenuProfile = null
                         }) {
-                            Text("Copy JSON", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Copy Open JSON", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                         TextButton(onClick = {
                             shareMenuProfile = null
                             qrProfile = target
                         }) {
-                            Text("Show QR Code (Standard / .svpn)", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Show Locked QR Code (.svpn)", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                     }
                 },
@@ -476,22 +477,20 @@ fun ConfigsScreen(
 
     if (qrProfile != null) {
         val target = qrProfile!!
-        if (target.isImported) {
+        if (target.isImported && target.isLocked) {
             qrProfile = null
         } else {
-            val context = LocalContext.current
-            val hwid = remember { VpnStateBridge.getDeviceHardwareId(context) }
             val svpnUri = remember(target) {
-                ConfigCryptoHelper.exportProfileUri(target, target.isLocked, target.lockPassphrase, target.lockedDeviceId.ifBlank { hwid })
+                ConfigCryptoHelper.exportProfileUri(target, true, target.lockPassphrase, target.lockedDeviceId)
             }
             AlertDialog(
                 onDismissRequest = { qrProfile = null },
-                title = { Text("QR Code: ${target.name}", fontWeight = FontWeight.Bold) },
+                title = { Text("Locked QR: ${target.name}", fontWeight = FontWeight.Bold) },
                 text = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                         ConfigQrMatrixView(data = svpnUri)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Scan with Smart™vPN QR Scanner", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Scan with Smart™vPN QR Scanner (Imports as Locked Vault)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                 },
                 confirmButton = {
@@ -503,9 +502,9 @@ fun ConfigsScreen(
 
     if (exportingProfile != null) {
         val target = exportingProfile!!
-        if (target.isImported) {
+        if (target.isImported && target.isLocked) {
             exportingProfile = null
-            VpnStateBridge.toastMessage.value = "Imported configurations cannot be exported via any means"
+            VpnStateBridge.toastMessage.value = "Locked configurations cannot be exported"
         } else {
             ExportConfigurationFullDialog(
                 profile = target,
@@ -523,7 +522,7 @@ fun ConfigsScreen(
             initialProfile = editingProfile,
             onDismiss = { showConfigDialog = false },
             onSave = {
-                onSaveProfile(it.copy(isImported = false))
+                onSaveProfile(it.copy(isImported = false, isLocked = false))
                 showConfigDialog = false
             }
         )
@@ -543,13 +542,14 @@ fun ExportConfigurationFullDialog(
 
     var filename by remember { mutableStateOf(profile.name) }
     var uploadToCloud by remember { mutableStateOf(profile.uploadToCloud) }
-    var cloudProvider by remember { mutableStateOf(profile.cloudProvider.ifBlank { "Smartv3.5" }) }
+    var cloudProvider by remember { mutableStateOf(profile.cloudProvider.ifBlank { "Smartv3.5.1" }) }
     var burnAfterFirstImport by remember { mutableStateOf(profile.burnAfterFirstImport) }
     var cloudTimeLimit by remember { mutableStateOf(profile.cloudTimeLimit) }
     var cloudTimeUnit by remember { mutableStateOf(profile.cloudTimeUnit.ifBlank { "Minutes" }) }
     var maxDevicesSeatLimit by remember { mutableStateOf(profile.maxDevicesSeatLimit) }
 
-    var lockConfig by remember { mutableStateOf(profile.isLocked) }
+    // Default lockConfig to TRUE so when a user locks & shares an open file, it exports locked by default!
+    var lockConfig by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf(profile.lockPassphrase) }
     var targetHwids by remember { mutableStateOf(profile.lockedDeviceId) }
     var authorMessage by remember { mutableStateOf(profile.authorMessage) }
@@ -584,7 +584,7 @@ fun ExportConfigurationFullDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Export Configuration", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                    Text("Lock & Export Configuration", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null) }
                 }
 
@@ -614,7 +614,7 @@ fun ExportConfigurationFullDialog(
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Select Cloud Provider", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("Smartv3.5", "Ghost", "Rentry").forEach { prov ->
+                                listOf("Smartv3.5.1", "Ghost", "Rentry").forEach { prov ->
                                     val sel = cloudProvider == prov
                                     Button(
                                         onClick = {
@@ -649,7 +649,14 @@ fun ExportConfigurationFullDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Lock Configuration Settings", fontWeight = FontWeight.SemiBold)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Lock Configuration (Prevent Recipient Edit/Share)", fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = if (lockConfig) "Recipient CANNOT edit, clone, or share this file" else "Exporting as Open file (Recipient can edit & share)",
+                            fontSize = 11.sp,
+                            color = if (lockConfig) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Switch(checked = lockConfig, onCheckedChange = { lockConfig = it })
                 }
 
@@ -739,13 +746,13 @@ fun ExportConfigurationFullDialog(
                         val updatedProfile = profile.copy(
                             name = filename.ifBlank { profile.name },
                             isImported = false,
+                            isLocked = false,
                             uploadToCloud = uploadToCloud,
                             cloudProvider = cloudProvider,
                             burnAfterFirstImport = burnAfterFirstImport,
                             cloudTimeLimit = cloudTimeLimit,
                             cloudTimeUnit = cloudTimeUnit,
                             maxDevicesSeatLimit = maxDevicesSeatLimit,
-                            isLocked = lockConfig,
                             lockPassphrase = password,
                             lockedDeviceId = targetHwids,
                             authorMessage = authorMessage,
@@ -785,9 +792,9 @@ fun ExportConfigurationFullDialog(
                                     putExtra(Intent.EXTRA_SUBJECT, "$cleanName.svpn")
                                     putExtra(Intent.EXTRA_TEXT, encryptedUri)
                                 }
-                                context.startActivity(Intent.createChooser(sendIntent, "Save / Share .svpn File"))
+                                context.startActivity(Intent.createChooser(sendIntent, "Lock & Share .svpn Config"))
                             } catch (_: Throwable) {}
-                            VpnStateBridge.toastMessage.value = "Saved as .svpn & copied to clipboard"
+                            VpnStateBridge.toastMessage.value = if (lockConfig) "Locked .svpn copied & ready to share!" else "Open .svpn copied & ready to share!"
                             onSaveLockedProfile(updatedProfile)
                         }
                     },
@@ -796,7 +803,12 @@ fun ExportConfigurationFullDialog(
                     modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
                     Text(
-                        text = if (uploadToCloud) "Export to Cloud" else "Save as .svpn File",
+                        text = when {
+                            uploadToCloud && lockConfig -> "🔒 Lock & Upload to Cloud"
+                            uploadToCloud -> "Upload Open Config to Cloud"
+                            lockConfig -> "🔒 Lock & Share (.svpn / Clipboard)"
+                            else -> "Share Open Config (.svpn / Clipboard)"
+                        },
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp
                     )
@@ -1095,6 +1107,7 @@ fun ProtocolConfigDialog(
                                 rawJson = if (jsonEditor) rawJson else "",
                                 isSelected = true,
                                 isImported = false,
+                                isLocked = false,
                                 sshUser = sshUser,
                                 sshPass = sshPass,
                                 payload = payload,
@@ -1176,4 +1189,4 @@ fun ConfigQrMatrixView(data: String) {
         }
     }
 }
-// === END OF FILE 15 ===
+// === END OF FILE 8 ===
