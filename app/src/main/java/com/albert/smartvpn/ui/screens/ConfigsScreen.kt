@@ -294,8 +294,6 @@ fun ConfigsScreen(
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Open configs allow Ping, Lock & Share (🔗), Clone (📄), Edit (✏️), Delete (🗑️)
-                                // Locked configs ONLY allow Ping (⚡) and Delete (🗑️)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End,
@@ -409,7 +407,6 @@ fun ConfigsScreen(
         )
     }
 
-    // Share & Lock Menu Dialog (Available for all Open & Manually Created Profiles)
     if (shareMenuProfile != null) {
         val target = shareMenuProfile!!
         if (target.isImported && target.isLocked) {
@@ -548,7 +545,6 @@ fun ExportConfigurationFullDialog(
     var cloudTimeUnit by remember { mutableStateOf(profile.cloudTimeUnit.ifBlank { "Minutes" }) }
     var maxDevicesSeatLimit by remember { mutableStateOf(profile.maxDevicesSeatLimit) }
 
-    // Default lockConfig to TRUE so when a user locks & shares an open file, it exports locked by default!
     var lockConfig by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf(profile.lockPassphrase) }
     var targetHwids by remember { mutableStateOf(profile.lockedDeviceId) }
@@ -1189,4 +1185,4 @@ fun ConfigQrMatrixView(data: String) {
         }
     }
 }
-// === END OF FILE 8 ===
+// === END OF ConfigsScreen.kt ===
