@@ -11,7 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,24 +27,31 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -105,28 +118,98 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SmartVpnBrandCrest(sizeDp: Int = 46) {
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = Color(0xFF0A1936),
-            border = BorderStroke(1.5.dp, Color(0xFFFFB300)),
-            modifier = Modifier.size(sizeDp.dp)
+    private fun SmartVpnBrandCrest(sizeDp: Int = 46, animated: Boolean = false) {
+        val infiniteTransition = rememberInfiniteTransition(label = "CrestSpin")
+        val spinAngle by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 6000, easing = LinearEasing)
+            ),
+            label = "Spin"
+        )
+        val effectiveAngle = if (animated) spinAngle else 45f
+
+        Box(
+            modifier = Modifier.size(sizeDp.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Smart™vPN Padlock",
-                        tint = Color(0xFF00E5FF),
-                        modifier = Modifier.size((sizeDp * 0.45f).dp)
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val cx = w / 2f
+
+                rotate(effectiveAngle) {
+                    drawArc(
+                        color = Color(0xFF00E5FF),
+                        startAngle = 0f,
+                        sweepAngle = 110f,
+                        useCenter = false,
+                        style = Stroke(width = w * 0.045f, cap = StrokeCap.Round)
                     )
-                    Text(
-                        text = "VPN",
-                        fontSize = (sizeDp * 0.18f).sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFFFFB300)
+                    drawArc(
+                        color = Color(0xFFFFB300),
+                        startAngle = 180f,
+                        sweepAngle = 110f,
+                        useCenter = false,
+                        style = Stroke(width = w * 0.045f, cap = StrokeCap.Round)
                     )
                 }
+
+                val shieldPath = Path().apply {
+                    moveTo(cx, h * 0.10f)
+                    lineTo(w * 0.86f, h * 0.25f)
+                    lineTo(w * 0.86f, h * 0.56f)
+                    cubicTo(w * 0.86f, h * 0.76f, w * 0.70f, h * 0.88f, cx, h * 0.93f)
+                    cubicTo(w * 0.30f, h * 0.88f, w * 0.14f, h * 0.76f, w * 0.14f, h * 0.56f)
+                    lineTo(w * 0.14f, h * 0.25f)
+                    close()
+                }
+
+                drawPath(
+                    path = shieldPath,
+                    brush = Brush.linearGradient(
+                        colors = listOf(Color(0xFF061329), Color(0xFF0E254D), Color(0xFF040B18))
+                    )
+                )
+                drawPath(
+                    path = shieldPath,
+                    brush = Brush.linearGradient(
+                        colors = listOf(Color(0xFF00E5FF), Color(0xFF0077FF), Color(0xFFFFB300))
+                    ),
+                    style = Stroke(width = w * 0.04f)
+                )
+
+                drawArc(
+                    color = Color(0xFF00E5FF),
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.37f, h * 0.27f),
+                    size = Size(w * 0.26f, h * 0.24f),
+                    style = Stroke(width = w * 0.055f, cap = StrokeCap.Round)
+                )
+
+                drawRoundRect(
+                    brush = Brush.linearGradient(
+                        colors = listOf(Color(0xFFFFE082), Color(0xFFFFB300), Color(0xFFFF8F00))
+                    ),
+                    topLeft = Offset(w * 0.31f, h * 0.42f),
+                    size = Size(w * 0.38f, h * 0.30f),
+                    cornerRadius = CornerRadius(w * 0.06f, w * 0.06f)
+                )
+
+                drawCircle(
+                    color = Color(0xFF061329),
+                    radius = w * 0.038f,
+                    center = Offset(cx, h * 0.53f)
+                )
+                drawRoundRect(
+                    color = Color(0xFF061329),
+                    topLeft = Offset(cx - w * 0.02f, h * 0.54f),
+                    size = Size(w * 0.04f, h * 0.10f),
+                    cornerRadius = CornerRadius(2f, 2f)
+                )
             }
         }
     }
@@ -134,83 +217,221 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun SmartVpnWelcomeSplashScreen(onContinue: () -> Unit) {
         val context = LocalContext.current
+        val clipboardManager = LocalClipboardManager.current
         val hwid = remember { VpnStateBridge.getDeviceHardwareId(context) }
+        var copiedHwid by remember { mutableStateOf(false) }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF050A18), Color(0xFF0E1D3A), Color(0xFF060B16))
+                        colors = listOf(Color(0xFF030712), Color(0xFF0A1833), Color(0xFF040914))
                     )
                 )
-                .padding(24.dp),
+                .padding(horizontal = 20.dp, vertical = 18.dp),
             contentAlignment = Alignment.Center
         ) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.5.dp, Color(0xFFFFB300), RoundedCornerShape(28.dp)),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0D172E))
+                    .border(
+                        width = 1.5.dp,
+                        brush = Brush.linearGradient(listOf(Color(0xFF00E5FF), Color(0xFFFFB300))),
+                        shape = RoundedCornerShape(30.dp)
+                    ),
+                shape = RoundedCornerShape(30.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF091326).copy(alpha = 0.96f))
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
+                        .verticalScroll(rememberScrollState())
+                        .padding(22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    SmartVpnBrandCrest(sizeDp = 76)
+                    SmartVpnBrandCrest(sizeDp = 96, animated = true)
 
-                    Text(
-                        text = "Welcome to Smart™vPN",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        textAlign = TextAlign.Center
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Smart™vPN",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            letterSpacing = 0.8.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color(0xFF00E5FF).copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.7f))
+                        ) {
+                            Text(
+                                text = "QUANTUM STEALTH CORE • v3.5.1 PRO",
+                                color = Color(0xFF00E5FF),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.2.sp,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
 
+                    // System Readiness Diagnostic HUD
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFFFFB300).copy(alpha = 0.18f),
-                        border = BorderStroke(1.dp, Color(0xFFFFB300))
+                        color = Color(0xFF060E1E),
+                        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "SMART v3.5 PRO • STEALTH VPN ENGINE",
-                            color = Color(0xFFFFB300),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "SYSTEM DIAGNOSTIC HUD",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFFFB300)
+                            )
+                            Text(
+                                text = "✓ [OK] 24-Protocol Stealth Engine Armed\n" +
+                                    "✓ [OK] Live SHA-256 Server Fingerprint Verifier\n" +
+                                    "✓ [OK] Open-File Lock & Share Vault Ready",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = Color(0xFF00E676),
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SplashFeatureTile(
+                            icon = "🛡️",
+                            title = "24 Protocols",
+                            desc = "SSH, TLS, Payload, DNSTT, VLESS Reality, HY2 & WG",
+                            modifier = Modifier.weight(1f)
+                        )
+                        SplashFeatureTile(
+                            icon = "🔒",
+                            title = "Smart Lock Vault",
+                            desc = "Lock & share open configs; locked imports stay protected",
+                            modifier = Modifier.weight(1f)
                         )
                     }
 
-                    Text(
-                        text = "Smart™vPN v3.5 is an enterprise-grade, multi-protocol stealth tunnel engineered for high-speed browsing, zero-drop streaming, and military-grade encryption:\n\n" +
-                            "• 🔒 24 Tunneling Protocols: SSH, SSL/TLS, WebSocket Payload, SlowDNS (DNSTT), VLESS Reality, VMess, Trojan, WireGuard & Hysteria2 QUIC.\n" +
-                            "• ⚖️ Multi-Tick Load Balancing: Tick multiple manually created configs to combine their bandwidth simultaneously.\n" +
-                            "• 🛡️ Encrypted Vault Protection: Imported Cloud, File & QR configs are strictly locked against unauthorized editing, cloning, or re-exporting.\n" +
-                            "• 🆔 Device Hardware ID: $hwid",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFD0E1FF),
-                        lineHeight = 19.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SplashFeatureTile(
+                            icon = "🧬",
+                            title = "SHA-256 Verify",
+                            desc = "Real-time server host key & TLS fingerprint logging",
+                            modifier = Modifier.weight(1f)
+                        )
+                        SplashFeatureTile(
+                            icon = "⚖️",
+                            title = "Multi-Tick Core",
+                            desc = "Tick multiple open/manual nodes for combined speed",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF060E1E),
+                        border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                clipboardManager.setText(AnnotatedString(hwid))
+                                copiedHwid = true
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "🆔 DEVICE HARDWARE ID (TAP TO COPY)",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF00E676)
+                                )
+                                Text(
+                                    text = hwid,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Text(
+                                text = if (copiedHwid) "✓ COPIED" else "📋 COPY",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF00E676)
+                            )
+                        }
+                    }
 
                     Button(
                         onClick = onContinue,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF), contentColor = Color(0xFF001F29)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00E5FF),
+                            contentColor = Color(0xFF001B26)
+                        ),
                         shape = RoundedCornerShape(24.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
+                            .height(54.dp)
                     ) {
                         Text(
-                            text = "LAUNCH SMART™vPN v3.5 →",
+                            text = "INITIALIZE SMART™vPN v3.5.1 ⚡",
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
+                            letterSpacing = 0.8.sp
                         )
                     }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun SplashFeatureTile(
+        icon: String,
+        title: String,
+        desc: String,
+        modifier: Modifier = Modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF0F1D38),
+            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.25f)),
+            modifier = modifier
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(icon, fontSize = 15.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, color = Color.White)
+                }
+                Text(desc, fontSize = 10.sp, color = Color(0xFF9FB3D6), lineHeight = 14.sp)
             }
         }
     }
@@ -275,20 +496,19 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                     ) {
-                        // Redesigned Smart v3.5 Luxury Executive Drawer Header + Visible Hardware 🆔 Copy Card
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
                                     Brush.linearGradient(
-                                        colors = listOf(Color(0xFF07132C), Color(0xFF142E5E), Color(0xFF0A4D68))
+                                        colors = listOf(Color(0xFF050E22), Color(0xFF102854), Color(0xFF083D56))
                                     )
                                 )
                                 .padding(18.dp)
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    SmartVpnBrandCrest(sizeDp = 52)
+                                    SmartVpnBrandCrest(sizeDp = 56, animated = true)
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
                                         Text(
@@ -298,7 +518,7 @@ class MainActivity : ComponentActivity() {
                                             color = Color.White
                                         )
                                         Text(
-                                            text = "SMART v3.5 EXECUTIVE EDITION",
+                                            text = "SMART v3.5.1 PRO EDITION",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFFFFB300),
@@ -307,11 +527,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                // VISIBLE HARDWARE 🆔 CARD IN MENU FOR 1-TAP COPY
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = Color.Black.copy(alpha = 0.38f),
-                                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
+                                    color = Color.Black.copy(alpha = 0.42f),
+                                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.65f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
@@ -426,7 +645,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("ℹ️  About Smart™vPN v3.5", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("ℹ️  About Smart™vPN v3.5.1", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -484,7 +703,7 @@ class MainActivity : ComponentActivity() {
                                     .fillMaxWidth()
                                     .height(46.dp)
                             ) {
-                                Text("👑  SMART v3.5 PRO UNLOCKED", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                Text("👑  SMART v3.5.1 PRO UNLOCKED", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -496,7 +715,7 @@ class MainActivity : ComponentActivity() {
                     TopAppBar(
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                SmartVpnBrandCrest(sizeDp = 34)
+                                SmartVpnBrandCrest(sizeDp = 36, animated = isConnected)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Smart™vPN",
@@ -510,7 +729,7 @@ class MainActivity : ComponentActivity() {
                                     color = Color(0xFFFFB300)
                                 ) {
                                     Text(
-                                        text = "v3.5",
+                                        text = "v3.5.1",
                                         color = Color.Black,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.ExtraBold,
@@ -570,7 +789,7 @@ class MainActivity : ComponentActivity() {
                                     onDismissRequest = { showPlusMenu = false },
                                     modifier = Modifier
                                         .background(MaterialTheme.colorScheme.surface)
-                                        .width(245.dp)
+                                        .width(250.dp)
                                 ) {
                                     DropdownMenuItem(
                                         text = { Text("Import from Clipboard", fontWeight = FontWeight.SemiBold) },
@@ -612,13 +831,13 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Export Active Config 🔒", fontWeight = FontWeight.SemiBold) },
+                                        text = { Text("Lock & Export Active Config 🔒", fontWeight = FontWeight.SemiBold) },
                                         onClick = {
                                             showPlusMenu = false
                                             if (activeProfile == null) {
                                                 viewModel.showToastPill("No active configuration to export")
-                                            } else if (activeProfile.isImported) {
-                                                viewModel.showToastPill("Imported configurations cannot be exported via any means")
+                                            } else if (activeProfile.isImported && activeProfile.isLocked) {
+                                                viewModel.showToastPill("Locked imported configurations cannot be shared or exported")
                                             } else {
                                                 scope.launch {
                                                     pagerState.animateScrollToPage(1)
@@ -631,11 +850,11 @@ class MainActivity : ComponentActivity() {
                                         text = { Text("Export Load Balance Bundle ⚖️", fontWeight = FontWeight.SemiBold) },
                                         onClick = {
                                             showPlusMenu = false
-                                            val manualList = profiles.filter { !it.isImported }
-                                            if (manualList.size < 2) {
-                                                viewModel.showToastPill("You need at least 2 manually created configs to export a bundle (Imported configs cannot be exported).")
+                                            val openList = profiles.filter { !(it.isImported && it.isLocked) }
+                                            if (openList.size < 2) {
+                                                viewModel.showToastPill("You need at least 2 open/manual configs to export a bundle.")
                                             } else {
-                                                val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(manualList)
+                                                val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(openList)
                                                 clipboardManager.setText(AnnotatedString(bundleUri))
                                                 viewModel.showToastPill("Load Balance Bundle copied to clipboard")
                                             }
@@ -766,7 +985,7 @@ class MainActivity : ComponentActivity() {
         if (showThemeMenu) {
             AlertDialog(
                 onDismissRequest = { showThemeMenu = false },
-                title = { Text("Smart™vPN v3.5 Themes (10 + Auto Day/Night)", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp) },
+                title = { Text("Smart™vPN v3.5.1 Themes (10 + Auto Day/Night)", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp) },
                 text = {
                     Column(
                         modifier = Modifier
@@ -808,12 +1027,12 @@ class MainActivity : ComponentActivity() {
         if (showAboutModal) {
             AlertDialog(
                 onDismissRequest = { showAboutModal = false },
-                title = { Text("Smart™vPN v3.5 PRO", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("Smart™vPN v3.5.1 PRO", fontWeight = FontWeight.ExtraBold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Version: 3.5.0 (Build 350)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text("Version: 3.5.1 (Build 351)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         Text("Hardware 🆔: $hwid", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                        Text("Enterprise Multi-Protocol Stealth VPN supporting 24 protocols, Multi-Tick Manual Load Balancing, Encrypted Vault Locking, and Auto Day/Night Adaptive Themes.", fontSize = 12.sp)
+                        Text("Enterprise Multi-Protocol Stealth VPN supporting 24 protocols, Live Server SHA-256 Fingerprint Verification, Open-Config Lock & Share, and Auto Day/Night Adaptive Themes.", fontSize = 12.sp)
                     }
                 },
                 confirmButton = {
@@ -834,7 +1053,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun SmartV3UserManualDialog(onDismiss: () -> Unit) {
         var selectedTab by remember { mutableStateOf("All") }
-        val tabs = listOf("All", "⚠️ Tips", "⚡ Speed & Mux", "🌐 Protocols", "⚖️ Multi-Tick", "🔒 Vault Security")
+        val tabs = listOf("All", "⚠️ Tips", "⚡ Speed & Mux", "🌐 Protocols", "⚖️ Multi-Tick", "🔒 Lock & Share")
 
         Dialog(onDismissRequest = onDismiss) {
             Card(
@@ -855,7 +1074,7 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("📖 Smart™vPN v3.5 User Manual", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                            Text("📖 Smart™vPN v3.5.1 User Manual", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null) }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -886,7 +1105,7 @@ class MainActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             if (selectedTab in listOf("All", "⚠️ Tips")) {
-                                ManualCard("💡 Important Tips", "• Set Smart™vPN battery usage to Unrestricted.\n• Turn off Android Private DNS if a server blocks port 853.\n• Use the Live Ping button on the Home screen while connected to verify tunnel latency.")
+                                ManualCard("💡 Important Tips", "• Set Smart™vPN battery usage to Unrestricted.\n• Check the Logs tab during connection to view the server's verified SHA-256 Host Key & TLS Fingerprint.")
                             }
                             if (selectedTab in listOf("All", "⚡ Speed & Mux")) {
                                 ManualCard("🚀 Turbo Speed & Multiplexing", "• Turbo Mode doubles internal socket buffers and opens parallel SSH/Xray streams so all apps open without delay.")
@@ -895,10 +1114,10 @@ class MainActivity : ComponentActivity() {
                                 ManualCard("🌐 24 Supported Protocols", "• 17 SSH/TLS/Payload/Proxy/DNSTT modes, VMess, VLESS Reality, Trojan, ShadowSocks, WireGuard, OpenVPN, and Hysteria2.")
                             }
                             if (selectedTab in listOf("All", "⚖️ Multi-Tick")) {
-                                ManualCard("⚖️ Manual Multi-Tick vs Imported Single-Tick", "• Manually created configs can be cloned, edited, exported, and ticked together in multi-select.\n• Imported configs (Cloud, File, QR, Clipboard) are strictly locked: single-tick only, and cannot be cloned, edited, or exported.")
+                                ManualCard("⚖️ Open vs. Locked Multi-Tick", "• Open imported configs and manual configs can be cloned, edited, locked & shared, and multi-ticked together.\n• Locked imported configs (.svpn with lock enabled) are single-tick only and cannot be shared or edited.")
                             }
-                            if (selectedTab in listOf("All", "🔒 Vault Security")) {
-                                ManualCard("🔒 Hardware ID & Expiry", "• Copy your Hardware 🆔 directly from the left navigation menu to receive HWID-bound .svpn configurations.")
+                            if (selectedTab in listOf("All", "🔒 Lock & Share")) {
+                                ManualCard("🔒 Open File Lock & Share", "• Import any open URI via Clipboard, tap 🔗 on the card, and select 'Lock & Export Config 🔒' to lock it and share with your users.")
                             }
                         }
                     }
@@ -965,11 +1184,11 @@ class MainActivity : ComponentActivity() {
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Smart™vPN v3.5 PRO")
-                putExtra(Intent.EXTRA_TEXT, "Download Smart™vPN v3.5 PRO — Multi-Protocol Stealth VPN Tunnel (https://t.me/Smartking4luV)")
+                putExtra(Intent.EXTRA_SUBJECT, "Smart™vPN v3.5.1 PRO")
+                putExtra(Intent.EXTRA_TEXT, "Download Smart™vPN v3.5.1 PRO — Multi-Protocol Stealth VPN Tunnel (https://t.me/Smartking4luV)")
             }
             startActivity(Intent.createChooser(sendIntent, "Share Smart™vPN"))
         } catch (_: Throwable) {}
     }
 }
-// === END OF FILE 16 ===
+// === END OF MainActivity.kt ===
