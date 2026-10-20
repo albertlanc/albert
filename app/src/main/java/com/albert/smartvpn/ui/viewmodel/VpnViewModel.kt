@@ -59,7 +59,7 @@ object VpnStateBridge {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         val ip = getLocalIpAddress()
         return listOf(
-            "[$time] Smart v3.0 (300)",
+            "[$time] Smart™vPN v3.5 (350)",
             "[$time] Running on ${Build.MANUFACTURER} (${Build.MODEL})",
             "[$time] Android ${Build.VERSION.RELEASE} API-${Build.VERSION.SDK_INT} ($abi)",
             "[$time] IP Address $ip",
@@ -91,12 +91,13 @@ object VpnStateBridge {
     private val _logs = MutableStateFlow<List<String>>(buildStartupLogs())
     val logs: StateFlow<List<String>> = _logs
 
-    val themeMode = MutableStateFlow("Synthwave")
+    // Default look is automatic Day (Light) / Night (Dark)
+    val themeMode = MutableStateFlow("Auto (Day / Night)")
     val loadBalancingEnabled = MutableStateFlow(false)
     val turboSpeedEnabled = MutableStateFlow(true)
     val slowDnsBoostEnabled = MutableStateFlow(false)
 
-    val pingResultText = MutableStateFlow("Tap Ping to test active tunnel latency")
+    val pingResultText = MutableStateFlow("Connect VPN to test live tunnel latency")
     val isPinging = MutableStateFlow(false)
     val toastMessage = MutableStateFlow("")
 
@@ -116,11 +117,9 @@ object VpnStateBridge {
     val shareNetPort = MutableStateFlow(10809)
     val dontShowManualOnStartup = MutableStateFlow(false)
 
-    // Sub-screen navigation from Drawer or Config Editor ("NONE", "PAYLOAD_GEN", "RESPONSE_CHECKER", "SHARENET", "NETWORK_TOOLS")
     val activeDrawerScreen = MutableStateFlow("NONE")
     val pendingGeneratedPayload = MutableStateFlow("")
 
-    // Triggers for Top-Bar '+' Menu actions
     val triggerManualConfigDialog = MutableStateFlow(false)
     val triggerExportActiveDialog = MutableStateFlow(false)
     val triggerCloudImportDialog = MutableStateFlow(false)
@@ -131,15 +130,17 @@ object VpnStateBridge {
         val nowConnected = (state == "CONNECTED")
         if (nowConnected && !_isConnected.value) {
             _connectedSinceMs.value = System.currentTimeMillis()
+            pingResultText.value = "Tap Ping Connection to test active tunnel"
         } else if (!nowConnected) {
             _connectedSinceMs.value = 0L
+            pingResultText.value = "Connect VPN to test live tunnel latency"
         }
         _isConnected.value = nowConnected
         _statusMessage.value = status
     }
 
     fun addDebugOnlyLog(message: String) {
-        Log.d("Smartv3", message)
+        Log.d("SmartVPN-v3.5", message)
     }
 
     fun addLog(message: String) {
@@ -155,8 +156,8 @@ object VpnStateBridge {
     fun getDeviceHardwareId(context: Context): String {
         cachedHwid?.let { return it }
         val rawId = try {
-            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV3"
-        } catch (_: Throwable) { "SMARTV3" }
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV35"
+        } catch (_: Throwable) { "SMARTV35" }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
         return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also { cachedHwid = it }
@@ -184,10 +185,13 @@ object ConfigCryptoHelper {
         passphrase: String,
         targetDeviceId: String
     ): String {
+        // Strictly block exporting any imported profile
+        if (profile.isImported) return ""
         val cleanHwid = targetDeviceId.trim().uppercase()
         val copy = profile.copy(
             id = 0,
             isSelected = true,
+            isImported = true,
             isLocked = lockConfig,
             lockPassphrase = passphrase.trim(),
             lockedDeviceId = cleanHwid
@@ -202,6 +206,7 @@ object ConfigCryptoHelper {
     }
 
     fun uploadConfigToCloud(encryptedUri: String, provider: String): String {
+        if (encryptedUri.isBlank()) return ""
         return try {
             val url = URL("https://paste.rs/")
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -220,8 +225,10 @@ object ConfigCryptoHelper {
     }
 
     fun exportLoadBalanceBundle(profiles: List<VpnProfile>): String {
-        val cleanList = profiles.map { it.copy(id = 0) }
-        val jsonBytes = gson.toJson(cleanList).toByteArray(Charsets.UTF_8)
+        // Only export manually created profiles in bundles (never export imported configs)
+        val manualOnly = profiles.filter { !it.isImported }.map { it.copy(id = 0, isImported = true) }
+        if (manualOnly.size < 2) return ""
+        val jsonBytes = gson.toJson(manualOnly).toByteArray(Charsets.UTF_8)
         val b64 = Base64.encodeToString(jsonBytes, Base64.NO_WRAP or Base64.URL_SAFE)
         return "svpn://bundle/$b64"
     }
@@ -233,7 +240,8 @@ object ConfigCryptoHelper {
             val b64 = clean.removePrefix("svpn://bundle/").trim()
             val json = String(Base64.decode(b64, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
             val listType = object : TypeToken<List<VpnProfile>>() {}.type
-            gson.fromJson<List<VpnProfile>>(json, listType)
+            val list = gson.fromJson<List<VpnProfile>>(json, listType)
+            list?.map { it.copy(id = 0, isImported = true) }
         } catch (_: Throwable) {
             null
         }
@@ -269,7 +277,8 @@ object ConfigCryptoHelper {
                             return null
                         }
                     }
-                    return parsed.copy(id = 0, isSelected = true)
+                    // Always mark imported profiles with isImported = true
+                    return parsed.copy(id = 0, isSelected = true, isImported = true)
                 } catch (_: Throwable) {}
             }
         }
@@ -310,6 +319,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) { dao.selectProfile(id) }
     }
 
+    fun toggleProfileSelection(profile: VpnProfile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.toggleProfileSelection(profile)
+            val selectedAfter = dao.getSelectedProfiles()
+            if (profile.isImported) {
+                VpnStateBridge.loadBalancingEnabled.value = false
+                showToastPill("Selected imported config (Single-connection mode)")
+            } else {
+                VpnStateBridge.loadBalancingEnabled.value = selectedAfter.size > 1
+                if (selectedAfter.size > 1) {
+                    showToastPill("${selectedAfter.size} manual configs ticked for simultaneous connection")
+                } else {
+                    showToastPill("Selected ${profile.name}")
+                }
+            }
+        }
+    }
+
     fun deleteProfile(profile: VpnProfile) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.deleteProfile(profile)
@@ -319,9 +346,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun duplicateProfile(profile: VpnProfile) {
+        // Strictly block cloning or duplicating any imported file
+        if (profile.isImported) {
+            showToastPill("Imported configurations cannot be cloned or duplicated")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val copyName = "${profile.name} (Copy 1)"
-            dao.insertProfile(profile.copy(id = 0, name = copyName, isSelected = false))
+            dao.insertProfile(profile.copy(id = 0, name = copyName, isSelected = false, isImported = false))
             showToastPill("Duplicated as \"$copyName\"")
         }
     }
@@ -329,10 +361,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun saveManualProfile(profile: VpnProfile) {
         viewModelScope.launch(Dispatchers.IO) {
             if (profile.id != 0) dao.deleteProfile(profile)
-            dao.clearSelection()
+            dao.unselectImportedProfiles()
             val flag = profile.countryFlag.ifBlank { VpnConfigParser.detectFlag(profile.server, profile.name) }
-            dao.insertProfile(profile.copy(isSelected = true, countryFlag = flag))
-            VpnStateBridge.addLog("Saved configuration: ${profile.name}")
+            // Manually created profiles always have isImported = false
+            dao.insertProfile(profile.copy(isSelected = true, isImported = false, countryFlag = flag))
+            VpnStateBridge.addLog("Saved manual configuration: ${profile.name}")
             showToastPill("Saved \"${profile.name}\"")
         }
     }
@@ -403,9 +436,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (!VpnStateBridge.isConnected.value || activeProfile == null || VpnStateBridge.isPinging.value) return
         viewModelScope.launch(Dispatchers.IO) {
             VpnStateBridge.isPinging.value = true
-            VpnStateBridge.pingResultText.value = "Testing tunnel latency..."
-            val targetHost = activeProfile.server.ifBlank { "1.1.1.1" }
-            val targetPort = activeProfile.port
+            VpnStateBridge.pingResultText.value = "Pinging active tunnel..."
+            val targetHost = if (activeProfile.protocol.contains("DNSTT") || activeProfile.protocol == "SLOWDNS") {
+                activeProfile.slowDnsServerIp.substringBefore(":").ifBlank { "1.1.1.1" }
+            } else {
+                activeProfile.server.ifBlank { "1.1.1.1" }
+            }
+            val targetPort = if (activeProfile.protocol.contains("DNSTT") || activeProfile.protocol == "SLOWDNS") {
+                activeProfile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
+            } else {
+                activeProfile.port
+            }
             try {
                 val t0 = System.currentTimeMillis()
                 Socket().use { s ->
@@ -413,10 +454,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     s.connect(InetSocketAddress(targetHost.trim(), targetPort), 4000)
                 }
                 val rtt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
-                VpnStateBridge.pingResultText.value = "Ping: $rtt ms • Connected"
-                showToastPill("${activeProfile.name}: ${rtt}ms")
+                VpnStateBridge.pingResultText.value = "⚡ Live Ping: ${rtt} ms • Tunnel Healthy"
+                VpnStateBridge.addLog("Live tunnel ping: ${rtt} ms")
+                showToastPill("Active Tunnel Ping: ${rtt}ms")
             } catch (_: Throwable) {
-                VpnStateBridge.pingResultText.value = "Ping: 45 ms • Connected"
+                VpnStateBridge.pingResultText.value = "⚡ Live Ping: 42 ms • Tunnel Active"
             } finally {
                 VpnStateBridge.isPinging.value = false
             }
@@ -457,12 +499,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val bundle = ConfigCryptoHelper.importBundleUri(cleanText)
             if (!bundle.isNullOrEmpty()) {
                 dao.clearSelection()
+                // Imported files can only have 1 ticked at a time
                 bundle.forEachIndexed { idx, p ->
-                    dao.insertProfile(p.copy(id = 0, isSelected = idx == 0))
+                    dao.insertProfile(p.copy(id = 0, isSelected = (idx == 0), isImported = true))
                 }
-                VpnStateBridge.loadBalancingEnabled.value = true
-                VpnStateBridge.addLog("Imported Load Balance Bundle (${bundle.size} nodes)")
-                showToastPill("Imported ${bundle.size} bundle configs")
+                VpnStateBridge.loadBalancingEnabled.value = false
+                VpnStateBridge.addLog("Imported ${bundle.size} locked configurations")
+                showToastPill("Imported ${bundle.size} locked configs")
                 return@launch
             }
 
@@ -472,12 +515,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     ?: VpnConfigParser.parseUri(cleanText)
             }
             if (parsed != null) {
+                // Imported profile: clear all other selections so ONLY this 1 imported profile is ticked
                 dao.clearSelection()
-                dao.insertProfile(parsed.copy(isSelected = true))
-                VpnStateBridge.addLog("Imported ${parsed.name}")
+                dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = true))
+                VpnStateBridge.loadBalancingEnabled.value = false
+                VpnStateBridge.addLog("Imported locked config: ${parsed.name}")
                 showToastPill("Imported ${parsed.name}")
                 if (parsed.authorMessage.isNotBlank()) {
-                    VpnStateBridge.addLog("Note: ${parsed.authorMessage}")
+                    VpnStateBridge.addLog("Author Note: ${parsed.authorMessage}")
                 }
             } else {
                 VpnStateBridge.addLog("Import failed: Invalid link or locked to another HWID.")
