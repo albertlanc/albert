@@ -59,7 +59,7 @@ object VpnStateBridge {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         val ip = getLocalIpAddress()
         return listOf(
-            "[$time] Smart™vPN v3.5 (350)",
+            "[$time] Smart™vPN v3.5.1 (351)",
             "[$time] Running on ${Build.MANUFACTURER} (${Build.MODEL})",
             "[$time] Android ${Build.VERSION.RELEASE} API-${Build.VERSION.SDK_INT} ($abi)",
             "[$time] IP Address $ip",
@@ -91,7 +91,6 @@ object VpnStateBridge {
     private val _logs = MutableStateFlow<List<String>>(buildStartupLogs())
     val logs: StateFlow<List<String>> = _logs
 
-    // Default look is automatic Day (Light) / Night (Dark)
     val themeMode = MutableStateFlow("Auto (Day / Night)")
     val loadBalancingEnabled = MutableStateFlow(false)
     val turboSpeedEnabled = MutableStateFlow(true)
@@ -140,7 +139,7 @@ object VpnStateBridge {
     }
 
     fun addDebugOnlyLog(message: String) {
-        Log.d("SmartVPN-v3.5", message)
+        Log.d("SmartVPN-v3.5.1", message)
     }
 
     fun addLog(message: String) {
@@ -156,8 +155,8 @@ object VpnStateBridge {
     fun getDeviceHardwareId(context: Context): String {
         cachedHwid?.let { return it }
         val rawId = try {
-            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV35"
-        } catch (_: Throwable) { "SMARTV35" }
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV351"
+        } catch (_: Throwable) { "SMARTV351" }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
         return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also { cachedHwid = it }
@@ -185,13 +184,14 @@ object ConfigCryptoHelper {
         passphrase: String,
         targetDeviceId: String
     ): String {
-        // Strictly block exporting any imported profile
-        if (profile.isImported) return ""
+        // Block exporting a profile that was imported as a locked file
+        if (profile.isImported && profile.isLocked) return ""
         val cleanHwid = targetDeviceId.trim().uppercase()
         val copy = profile.copy(
             id = 0,
             isSelected = true,
-            isImported = true,
+            // Only mark as locked/imported in the exported payload if the user locked it
+            isImported = lockConfig,
             isLocked = lockConfig,
             lockPassphrase = passphrase.trim(),
             lockedDeviceId = cleanHwid
@@ -225,10 +225,10 @@ object ConfigCryptoHelper {
     }
 
     fun exportLoadBalanceBundle(profiles: List<VpnProfile>): String {
-        // Only export manually created profiles in bundles (never export imported configs)
-        val manualOnly = profiles.filter { !it.isImported }.map { it.copy(id = 0, isImported = true) }
-        if (manualOnly.size < 2) return ""
-        val jsonBytes = gson.toJson(manualOnly).toByteArray(Charsets.UTF_8)
+        val openProfiles = profiles.filter { !(it.isImported && it.isLocked) }
+            .map { it.copy(id = 0, isImported = true, isLocked = true) }
+        if (openProfiles.size < 2) return ""
+        val jsonBytes = gson.toJson(openProfiles).toByteArray(Charsets.UTF_8)
         val b64 = Base64.encodeToString(jsonBytes, Base64.NO_WRAP or Base64.URL_SAFE)
         return "svpn://bundle/$b64"
     }
@@ -241,7 +241,10 @@ object ConfigCryptoHelper {
             val json = String(Base64.decode(b64, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
             val listType = object : TypeToken<List<VpnProfile>>() {}.type
             val list = gson.fromJson<List<VpnProfile>>(json, listType)
-            list?.map { it.copy(id = 0, isImported = true) }
+            list?.map {
+                val locked = it.isLocked || it.isImported
+                it.copy(id = 0, isImported = locked, isLocked = locked)
+            }
         } catch (_: Throwable) {
             null
         }
@@ -277,8 +280,18 @@ object ConfigCryptoHelper {
                             return null
                         }
                     }
-                    // Always mark imported profiles with isImported = true
-                    return parsed.copy(id = 0, isSelected = true, isImported = true)
+                    // Determine if this imported .svpn file is a LOCKED file or an OPEN file
+                    val isLockedFile = parsed.isLocked ||
+                        parsed.lockPassphrase.isNotBlank() ||
+                        parsed.lockedDeviceId.isNotBlank() ||
+                        parsed.expiryDate.isNotBlank() ||
+                        parsed.burnAfterUse
+                    return parsed.copy(
+                        id = 0,
+                        isSelected = true,
+                        isImported = isLockedFile,
+                        isLocked = isLockedFile
+                    )
                 } catch (_: Throwable) {}
             }
         }
@@ -323,13 +336,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.toggleProfileSelection(profile)
             val selectedAfter = dao.getSelectedProfiles()
-            if (profile.isImported) {
+            if (profile.isImported && profile.isLocked) {
                 VpnStateBridge.loadBalancingEnabled.value = false
-                showToastPill("Selected imported config (Single-connection mode)")
+                showToastPill("Selected locked config (Single-connection mode)")
             } else {
                 VpnStateBridge.loadBalancingEnabled.value = selectedAfter.size > 1
                 if (selectedAfter.size > 1) {
-                    showToastPill("${selectedAfter.size} manual configs ticked for simultaneous connection")
+                    showToastPill("${selectedAfter.size} open/manual configs ticked for simultaneous connection")
                 } else {
                     showToastPill("Selected ${profile.name}")
                 }
@@ -346,14 +359,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun duplicateProfile(profile: VpnProfile) {
-        // Strictly block cloning or duplicating any imported file
-        if (profile.isImported) {
-            showToastPill("Imported configurations cannot be cloned or duplicated")
+        if (profile.isImported && profile.isLocked) {
+            showToastPill("Locked configurations cannot be cloned or duplicated")
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             val copyName = "${profile.name} (Copy 1)"
-            dao.insertProfile(profile.copy(id = 0, name = copyName, isSelected = false, isImported = false))
+            dao.insertProfile(profile.copy(id = 0, name = copyName, isSelected = false, isImported = false, isLocked = false))
             showToastPill("Duplicated as \"$copyName\"")
         }
     }
@@ -363,9 +375,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (profile.id != 0) dao.deleteProfile(profile)
             dao.unselectImportedProfiles()
             val flag = profile.countryFlag.ifBlank { VpnConfigParser.detectFlag(profile.server, profile.name) }
-            // Manually created profiles always have isImported = false
-            dao.insertProfile(profile.copy(isSelected = true, isImported = false, countryFlag = flag))
-            VpnStateBridge.addLog("Saved manual configuration: ${profile.name}")
+            // Keep local profile open on the creator's device so they can always edit or re-share it
+            dao.insertProfile(profile.copy(isSelected = true, isImported = false, isLocked = false, countryFlag = flag))
+            VpnStateBridge.addLog("Saved configuration: ${profile.name}")
             showToastPill("Saved \"${profile.name}\"")
         }
     }
@@ -499,12 +511,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val bundle = ConfigCryptoHelper.importBundleUri(cleanText)
             if (!bundle.isNullOrEmpty()) {
                 dao.clearSelection()
-                // Imported files can only have 1 ticked at a time
                 bundle.forEachIndexed { idx, p ->
-                    dao.insertProfile(p.copy(id = 0, isSelected = (idx == 0), isImported = true))
+                    dao.insertProfile(p.copy(id = 0, isSelected = (idx == 0), isImported = true, isLocked = true))
                 }
                 VpnStateBridge.loadBalancingEnabled.value = false
-                VpnStateBridge.addLog("Imported ${bundle.size} locked configurations")
+                VpnStateBridge.addLog("Imported ${bundle.size} locked bundle configurations")
                 showToastPill("Imported ${bundle.size} locked configs")
                 return@launch
             }
@@ -515,12 +526,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     ?: VpnConfigParser.parseUri(cleanText)
             }
             if (parsed != null) {
-                // Imported profile: clear all other selections so ONLY this 1 imported profile is ticked
-                dao.clearSelection()
-                dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = true))
-                VpnStateBridge.loadBalancingEnabled.value = false
-                VpnStateBridge.addLog("Imported locked config: ${parsed.name}")
-                showToastPill("Imported ${parsed.name}")
+                if (parsed.isLocked) {
+                    // Locked imported config: single-tick only, cannot be edited or re-shared
+                    dao.clearSelection()
+                    dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = true, isLocked = true))
+                    VpnStateBridge.loadBalancingEnabled.value = false
+                    VpnStateBridge.addLog("Imported locked config: ${parsed.name}")
+                    showToastPill("Imported Locked Config: ${parsed.name}")
+                } else {
+                    // Open imported config: can be edited, locked, and shared!
+                    dao.unselectImportedProfiles()
+                    dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = false, isLocked = false))
+                    VpnStateBridge.addLog("Imported open config: ${parsed.name} (Unlocked • Ready to lock & share)")
+                    showToastPill("Imported Open Config: ${parsed.name}")
+                }
                 if (parsed.authorMessage.isNotBlank()) {
                     VpnStateBridge.addLog("Author Note: ${parsed.authorMessage}")
                 }
