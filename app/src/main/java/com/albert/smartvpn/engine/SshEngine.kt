@@ -167,7 +167,6 @@ object SshEngine {
         val isPlainDirect = isSlowDns || mode == "SSH" || mode == "SSH-DIRECT"
 
         val client = SSHClient(sshConfig).apply {
-            // Custom HostKeyVerifier logs the server's cryptographic Host Key Fingerprint right when almost connected
             addHostKeyVerifier(object : HostKeyVerifier {
                 override fun verify(hostname: String?, port: Int, key: PublicKey?): Boolean {
                     if (emitUiLogs && key != null) {
@@ -697,7 +696,7 @@ object SshEngine {
                         if (data.size <= 10) continue
 
                         val atyp = data[3].toInt() and 0xFF
-                        var offset = 4
+                        val offset: Int
                         val dstHost = when (atyp) {
                             1 -> { offset = 8; InetAddress.getByAddress(data.copyOfRange(4, 8)).hostAddress ?: "1.1.1.1" }
                             3 -> { val l = data[4].toInt() and 0xFF; offset = 5 + l; String(data, 5, l) }
@@ -705,9 +704,9 @@ object SshEngine {
                             else -> continue
                         }
                         val dstPort = ((data[offset].toInt() and 0xFF) shl 8) or (data[offset + 1].toInt() and 0xFF)
-                        offset += 2
-                        val header = data.copyOfRange(0, offset)
-                        val payload = data.copyOfRange(offset, data.size)
+                        val payloadStart = offset + 2
+                        val header = data.copyOfRange(0, payloadStart)
+                        val payload = data.copyOfRange(payloadStart, data.size)
 
                         ioThreadPool.execute {
                             var bSrv: ServerSocket? = null
@@ -760,3 +759,4 @@ object SshEngine {
         }
     }
 }
+// === END OF SshEngine.kt ===
