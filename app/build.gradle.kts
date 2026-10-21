@@ -82,9 +82,11 @@ dependencies {
     kapt("androidx.room:room-compiler:$roomVersion")
 
     implementation("com.hierynomus:sshj:0.38.0")
+    implementation("net.i2p.crypto:eddsa:0.3.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.77")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
 
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
+// === END OF FILE 1 ===
