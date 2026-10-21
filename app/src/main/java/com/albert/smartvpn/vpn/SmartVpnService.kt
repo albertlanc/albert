@@ -106,7 +106,6 @@ class SmartVpnService : VpnService() {
                 else -> "${profile.server.trim()}:${profile.port}:${profile.sni.trim()}:$proto"
             }
 
-            // Try extracting live X.509 TLS Certificate SHA-256 fingerprint if TLS/HTTPS port
             var loggedLiveCert = false
             val isTlsPort = profile.port in listOf(443, 8443, 2053, 2083, 2087, 2096) ||
                 profile.security.equals("tls", true)
@@ -170,7 +169,6 @@ class SmartVpnService : VpnService() {
                     return@launch
                 }
 
-                // Locked imported files connect 1 at a time; Open & Manual configs can connect singly or multi-ticked
                 val activeNodes = if (primaryProfile.isImported && primaryProfile.isLocked) {
                     listOf(primaryProfile)
                 } else {
@@ -502,4 +500,4 @@ class SmartVpnService : VpnService() {
             .build()
     }
 }
-// === END OF FILE 7 ===
+// === END OF SmartVpnService.kt ===
