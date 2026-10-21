@@ -29,7 +29,8 @@ object VpnConfigParser {
     }
 
     fun toStandardUri(profile: VpnProfile): String {
-        if (profile.isLocked || profile.isImported) return ""
+        // Only block locked imported files; open imported files can be shared
+        if (profile.isImported && profile.isLocked) return ""
         val encName = URLEncoder.encode(profile.name, "UTF-8")
         return when (profile.protocol.uppercase()) {
             "TROJAN" -> "trojan://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
@@ -48,7 +49,7 @@ object VpnConfigParser {
     }
 
     fun toStandardJson(profile: VpnProfile): String {
-        if (profile.isLocked || profile.isImported) return ""
+        if (profile.isImported && profile.isLocked) return ""
         return if (profile.rawJson.isNotBlank()) profile.rawJson else prettyGson.toJson(profile)
     }
 
@@ -77,8 +78,8 @@ object VpnConfigParser {
         } catch (_: Throwable) {
             null
         }
-        // Open URIs/configs imported via clipboard/file are unlocked (isLocked = false, isImported = false)
-        // so the user can edit them, lock them, and share them!
+        // Open files imported via clipboard/file stay unlocked (isImported = false, isLocked = false)
+        // so the user can edit them, lock them, and share them
         return parsed?.copy(isImported = false, isLocked = false)
     }
 
@@ -420,3 +421,4 @@ object VpnConfigParser {
         )
     }
 }
+// === END OF VpnConfigParser.kt ===
