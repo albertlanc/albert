@@ -184,13 +184,11 @@ object ConfigCryptoHelper {
         passphrase: String,
         targetDeviceId: String
     ): String {
-        // Block exporting a profile that was imported as a locked file
         if (profile.isImported && profile.isLocked) return ""
         val cleanHwid = targetDeviceId.trim().uppercase()
         val copy = profile.copy(
             id = 0,
             isSelected = true,
-            // Only mark as locked/imported in the exported payload if the user locked it
             isImported = lockConfig,
             isLocked = lockConfig,
             lockPassphrase = passphrase.trim(),
@@ -208,13 +206,15 @@ object ConfigCryptoHelper {
     fun uploadConfigToCloud(encryptedUri: String, provider: String): String {
         if (encryptedUri.isBlank()) return ""
         return try {
-            val url = URL("https://paste.rs/")
+            val endpoint = if (provider.equals("Ghost", true)) "https://paste.rs/" else "https://paste.rs/"
+            val url = URL(endpoint)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
                 connectTimeout = 8000
                 readTimeout = 8000
                 setRequestProperty("Content-Type", "text/plain; charset=utf-8")
+                setRequestProperty("X-Cloud-Provider", provider)
             }
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(encryptedUri) }
             val response = conn.inputStream.bufferedReader().readText().trim()
@@ -280,7 +280,6 @@ object ConfigCryptoHelper {
                             return null
                         }
                     }
-                    // Determine if this imported .svpn file is a LOCKED file or an OPEN file
                     val isLockedFile = parsed.isLocked ||
                         parsed.lockPassphrase.isNotBlank() ||
                         parsed.lockedDeviceId.isNotBlank() ||
@@ -375,7 +374,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (profile.id != 0) dao.deleteProfile(profile)
             dao.unselectImportedProfiles()
             val flag = profile.countryFlag.ifBlank { VpnConfigParser.detectFlag(profile.server, profile.name) }
-            // Keep local profile open on the creator's device so they can always edit or re-share it
             dao.insertProfile(profile.copy(isSelected = true, isImported = false, isLocked = false, countryFlag = flag))
             VpnStateBridge.addLog("Saved configuration: ${profile.name}")
             showToastPill("Saved \"${profile.name}\"")
@@ -527,14 +525,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (parsed != null) {
                 if (parsed.isLocked) {
-                    // Locked imported config: single-tick only, cannot be edited or re-shared
                     dao.clearSelection()
                     dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = true, isLocked = true))
                     VpnStateBridge.loadBalancingEnabled.value = false
                     VpnStateBridge.addLog("Imported locked config: ${parsed.name}")
                     showToastPill("Imported Locked Config: ${parsed.name}")
                 } else {
-                    // Open imported config: can be edited, locked, and shared!
                     dao.unselectImportedProfiles()
                     dao.insertProfile(parsed.copy(id = 0, isSelected = true, isImported = false, isLocked = false))
                     VpnStateBridge.addLog("Imported open config: ${parsed.name} (Unlocked • Ready to lock & share)")
@@ -550,3 +546,4 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
+// === END OF VpnViewModel.kt ===
