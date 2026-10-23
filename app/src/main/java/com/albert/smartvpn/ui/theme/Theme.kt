@@ -1,204 +1,122 @@
 package com.albert.smartvpn.ui.theme
 
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
-import java.util.Calendar
 
-// 1. Midnight Obsidian (Night Default Dark)
-private val MidnightObsidianScheme = darkColorScheme(
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color(0xFF00262B),
-    primaryContainer = Color(0xFF0B253D),
-    onPrimaryContainer = Color(0xFF84FFFF),
-    secondary = Color(0xFF00E676),
-    onSecondary = Color(0xFF002912),
-    tertiary = Color(0xFFFFB300),
-    background = Color(0xFF060B16),
-    onBackground = Color(0xFFEAF2FF),
-    surface = Color(0xFF0D1526),
-    onSurface = Color(0xFFEAF2FF),
-    surfaceVariant = Color(0xFF15223B),
-    onSurfaceVariant = Color(0xFF9FB3D6),
-    error = Color(0xFFFF5252)
+// The exact 12 theme colors shown in the 4x3 grid in the video (08:02 - 08:14)
+val SmartThemePaletteColors = listOf(
+    Color(0xFFE91E63), // 0: Crimson Rose / Pink
+    Color(0xFF9C27B0), // 1: Royal Purple
+    Color(0xFF673AB7), // 2: Deep Indigo Violet
+    Color(0xFF3F51B5), // 3: Sapphire Blue
+    Color(0xFF2196F3), // 4: Sky Blue
+    Color(0xFF00BCD4), // 5: Cyan
+    Color(0xFF009688), // 6: Teal
+    Color(0xFF4CAF50), // 7: Green
+    Color(0xFF8BC34A), // 8: Lime Green
+    Color(0xFFCDDC39), // 9: Chartreuse
+    Color(0xFFFFC107), // 10: Amber Gold
+    Color(0xFFFF9800)  // 11: Warm Orange (Default in video!)
 )
 
-// 2. Daylight Sapphire (Day Default Light)
-private val DaylightSapphireScheme = lightColorScheme(
-    primary = Color(0xFF0055D4),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE8FF),
-    onPrimaryContainer = Color(0xFF002B73),
-    secondary = Color(0xFF00875A),
-    onSecondary = Color.White,
-    tertiary = Color(0xFFD97706),
-    background = Color(0xFFF4F7FC),
-    onBackground = Color(0xFF0D172A),
-    surface = Color.White,
-    onSurface = Color(0xFF0D172A),
-    surfaceVariant = Color(0xFFE6ECF7),
-    onSurfaceVariant = Color(0xFF475569),
-    error = Color(0xFFDC2626)
-)
-
-// 3. Synthwave Neon
-private val SynthwaveNeonScheme = darkColorScheme(
-    primary = Color(0xFFE011CF),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF391254),
-    onPrimaryContainer = Color(0xFFFF80F5),
-    secondary = Color(0xFF00E5FF),
-    tertiary = Color(0xFFFFB300),
-    background = Color(0xFF160724),
-    onBackground = Color(0xFFF5E9FF),
-    surface = Color(0xFF1F0A33),
-    onSurface = Color(0xFFF5E9FF),
-    surfaceVariant = Color(0xFF2B1045),
-    onSurfaceVariant = Color(0xFFC8B2E0),
-    error = Color(0xFFFF4D6D)
-)
-
-// 4. Emerald Matrix
-private val EmeraldMatrixScheme = darkColorScheme(
-    primary = Color(0xFF00E676),
-    onPrimary = Color(0xFF002410),
-    primaryContainer = Color(0xFF09311E),
-    onPrimaryContainer = Color(0xFF69F0AE),
-    secondary = Color(0xFF00E5FF),
-    tertiary = Color(0xFFFFD600),
-    background = Color(0xFF040E08),
-    onBackground = Color(0xFFE5FFF0),
-    surface = Color(0xFF091A10),
-    onSurface = Color(0xFFE5FFF0),
-    surfaceVariant = Color(0xFF11291B),
-    onSurfaceVariant = Color(0xFF93C4A6)
-)
-
-// 5. Royal Gold & Amethyst
-private val RoyalGoldScheme = darkColorScheme(
-    primary = Color(0xFFFFC107),
-    onPrimary = Color(0xFF261B00),
-    primaryContainer = Color(0xFF3A2905),
-    onPrimaryContainer = Color(0xFFFFE082),
-    secondary = Color(0xFF00E5FF),
-    tertiary = Color(0xFFE040FB),
-    background = Color(0xFF0F081D),
-    onBackground = Color(0xFFFFF8E7),
-    surface = Color(0xFF180F2E),
-    onSurface = Color(0xFFFFF8E7),
-    surfaceVariant = Color(0xFF251742),
-    onSurfaceVariant = Color(0xFFCBB9E8)
-)
-
-// 6. Crimson Phantom (Red Ops)
-private val CrimsonPhantomScheme = darkColorScheme(
-    primary = Color(0xFFFF1744),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF420A16),
-    onPrimaryContainer = Color(0xFFFF8A80),
-    secondary = Color(0xFF00E5FF),
-    tertiary = Color(0xFFFFC107),
-    background = Color(0xFF0F0507),
-    onBackground = Color(0xFFFFECEE),
-    surface = Color(0xFF1A090D),
-    onSurface = Color(0xFFFFECEE),
-    surfaceVariant = Color(0xFF2B1016),
-    onSurfaceVariant = Color(0xFFD6A3AC)
-)
-
-// 7. Arctic Glacier (Ice Light)
-private val ArcticGlacierScheme = lightColorScheme(
-    primary = Color(0xFF00838F),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFCCF2F7),
-    onPrimaryContainer = Color(0xFF00363C),
-    secondary = Color(0xFF0284C7),
-    tertiary = Color(0xFF0D9488),
-    background = Color(0xFFF0FAFC),
-    onBackground = Color(0xFF082226),
-    surface = Color.White,
-    onSurface = Color(0xFF082226),
-    surfaceVariant = Color(0xFFDDF1F5),
-    onSurfaceVariant = Color(0xFF3E646B)
-)
-
-// 8. Ocean Titanium (Deep Navy)
-private val OceanTitaniumScheme = darkColorScheme(
-    primary = Color(0xFF38BDF8),
-    onPrimary = Color(0xFF002438),
-    primaryContainer = Color(0xFF0D314D),
-    onPrimaryContainer = Color(0xFFBAE6FD),
-    secondary = Color(0xFF34D399),
-    tertiary = Color(0xFFFBBF24),
-    background = Color(0xFF07131F),
-    onBackground = Color(0xFFF0F9FF),
-    surface = Color(0xFF0E2033),
-    onSurface = Color(0xFFF0F9FF),
-    surfaceVariant = Color(0xFF17304A),
-    onSurfaceVariant = Color(0xFF94B8D7)
-)
-
-// 9. Sunset Amber (Warm Dark)
-private val SunsetAmberScheme = darkColorScheme(
-    primary = Color(0xFFFF6D00),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF421C04),
-    onPrimaryContainer = Color(0xFFFFB780),
-    secondary = Color(0xFFFFD600),
-    tertiary = Color(0xFF00E5FF),
-    background = Color(0xFF140B06),
-    onBackground = Color(0xFFFFF3EB),
-    surface = Color(0xFF21120A),
-    onSurface = Color(0xFFFFF3EB),
-    surfaceVariant = Color(0xFF331D11),
-    onSurfaceVariant = Color(0xFFD9B6A3)
-)
-
-// 10. Monochrome Slate (Minimalist)
-private val MonochromeSlateScheme = darkColorScheme(
-    primary = Color(0xFFF1F5F9),
-    onPrimary = Color(0xFF0F172A),
-    primaryContainer = Color(0xFF334155),
-    onPrimaryContainer = Color.White,
-    secondary = Color(0xFF94A3B8),
-    tertiary = Color(0xFFCBD5E1),
-    background = Color(0xFF090D16),
-    onBackground = Color(0xFFF8FAFC),
-    surface = Color(0xFF131B2E),
-    onSurface = Color(0xFFF8FAFC),
-    surfaceVariant = Color(0xFF1E293B),
-    onSurfaceVariant = Color(0xFF94A3B8)
-)
+private fun blend(c1: Color, c2: Color, ratio: Float): Color {
+    val r = c1.red * (1f - ratio) + c2.red * ratio
+    val g = c1.green * (1f - ratio) + c2.green * ratio
+    val b = c1.blue * (1f - ratio) + c2.blue * ratio
+    return Color(r.coerceIn(0f, 1f), g.coerceIn(0f, 1f), b.coerceIn(0f, 1f), 1f)
+}
 
 @Composable
 fun SmartVpnTheme(
     content: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
     val themeMode by VpnStateBridge.themeMode.collectAsState()
-    val isDaytime = remember {
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        hour in 6..17
+    val useDynamicColor by VpnStateBridge.dynamicColorEnabled.collectAsState()
+    val colorIndex by VpnStateBridge.themeColorIndex.collectAsState()
+    val contrastLevel by VpnStateBridge.themeContrast.collectAsState() // "N", "M", "H"
+
+    val systemDark = isSystemInDarkTheme()
+    val isDark = when (themeMode) {
+        "Light" -> false
+        "Dark" -> true
+        else -> systemDark
     }
 
-    val colorScheme = when (themeMode) {
-        "Auto (Day / Night)" -> if (isDaytime) DaylightSapphireScheme else MidnightObsidianScheme
-        "1. Midnight Obsidian (Dark)" -> MidnightObsidianScheme
-        "2. Daylight Sapphire (Light)" -> DaylightSapphireScheme
-        "3. Synthwave Neon (Violet)" -> SynthwaveNeonScheme
-        "4. Emerald Matrix (Cyber Green)" -> EmeraldMatrixScheme
-        "5. Royal Gold & Amethyst" -> RoyalGoldScheme
-        "6. Crimson Phantom (Red Ops)" -> CrimsonPhantomScheme
-        "7. Arctic Glacier (Ice Light)" -> ArcticGlacierScheme
-        "8. Ocean Titanium (Deep Navy)" -> OceanTitaniumScheme
-        "9. Sunset Amber (Warm Dark)" -> SunsetAmberScheme
-        "10. Monochrome Slate (Minimal)" -> MonochromeSlateScheme
-        else -> if (isDaytime) DaylightSapphireScheme else MidnightObsidianScheme
+    val seedColor = SmartThemePaletteColors.getOrElse(colorIndex) { Color(0xFFFF9800) }
+
+    val primaryAdjusted = when (contrastLevel) {
+        "H" -> if (isDark) blend(seedColor, Color.White, 0.25f) else blend(seedColor, Color.Black, 0.38f)
+        "M" -> if (isDark) blend(seedColor, Color.White, 0.12f) else blend(seedColor, Color.Black, 0.22f)
+        else -> if (isDark) seedColor else blend(seedColor, Color.Black, 0.08f)
+    }
+
+    val colorScheme = when {
+        useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        isDark -> {
+            val bg = blend(Color(0xFF141210), seedColor, 0.06f)
+            val surf = blend(Color(0xFF1E1B18), seedColor, 0.10f)
+            val surfVar = blend(Color(0xFF2B2520), seedColor, 0.16f)
+            darkColorScheme(
+                primary = primaryAdjusted,
+                onPrimary = if (primaryAdjusted.luminance() > 0.45f) Color(0xFF1F1400) else Color.White,
+                primaryContainer = blend(seedColor, Color(0xFF2A2118), 0.55f),
+                onPrimaryContainer = Color(0xFFFFEDE0),
+                secondary = seedColor,
+                onSecondary = Color.Black,
+                tertiary = Color(0xFF2E7D32),
+                background = bg,
+                onBackground = Color(0xFFF5EFEA),
+                surface = surf,
+                onSurface = Color(0xFFF5EFEA),
+                surfaceVariant = surfVar,
+                onSurfaceVariant = Color(0xFFD5C4B8),
+                outline = blend(Color(0xFF8D7B6D), seedColor, 0.25f)
+            )
+        }
+        else -> {
+            // Exact warm cream/tinted paper background & card aesthetic from the video
+            val creamBg = blend(Color(0xFFFFFBF7), seedColor, if (contrastLevel == "H") 0.06f else 0.03f)
+            val creamSurface = blend(Color(0xFFFAF2EA), seedColor, 0.06f)
+            val creamSurfaceVar = blend(Color(0xFFF3E5D8), seedColor, 0.14f)
+            val containerFill = when (contrastLevel) {
+                "H" -> blend(seedColor, Color.Black, 0.28f)
+                "M" -> blend(seedColor, Color.White, 0.55f)
+                else -> blend(seedColor, Color.White, 0.65f)
+            }
+            val onContainerText = if (contrastLevel == "H") Color.White else Color(0xFF2B1704)
+
+            lightColorScheme(
+                primary = primaryAdjusted,
+                onPrimary = if (primaryAdjusted.luminance() > 0.5f) Color(0xFF241500) else Color.White,
+                primaryContainer = containerFill,
+                onPrimaryContainer = onContainerText,
+                secondary = blend(seedColor, Color(0xFF4E342E), 0.35f),
+                onSecondary = Color.White,
+                tertiary = Color(0xFF2E7D32),
+                background = creamBg,
+                onBackground = Color(0xFF241A12),
+                surface = creamSurface,
+                onSurface = Color(0xFF241A12),
+                surfaceVariant = creamSurfaceVar,
+                onSurfaceVariant = Color(0xFF5C4938),
+                outline = blend(Color(0xFFB8A28E), seedColor, 0.28f)
+            )
+        }
     }
 
     MaterialTheme(
@@ -206,3 +124,4 @@ fun SmartVpnTheme(
         content = content
     )
 }
+// === END OF Theme.kt ===
