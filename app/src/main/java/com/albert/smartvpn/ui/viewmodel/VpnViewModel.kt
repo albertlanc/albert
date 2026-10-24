@@ -98,6 +98,10 @@ object VpnStateBridge {
     val logs: StateFlow<List<String>> = _logs
 
     val themeMode = MutableStateFlow("Auto (Day / Night)")
+    val dynamicColorEnabled = MutableStateFlow(false)
+    val themeColorIndex = MutableStateFlow(0)
+    val themeContrast = MutableStateFlow("Standard")
+
     val loadBalancingEnabled = MutableStateFlow(false)
     val turboSpeedEnabled = MutableStateFlow(true)
     val slowDnsBoostEnabled = MutableStateFlow(false)
@@ -162,10 +166,14 @@ object VpnStateBridge {
         cachedHwid?.let { return it }
         val rawId = try {
             Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV110"
-        } catch (_: Throwable) { "SMARTV110" }
+        } catch (_: Throwable) {
+            "SMARTV110"
+        }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
-        return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also { cachedHwid = it }
+        return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also {
+            cachedHwid = it
+        }
     }
 }
 
@@ -174,8 +182,12 @@ object ConfigCryptoHelper {
     private val rng = SecureRandom()
 
     // Obfuscated hardware enclave shards (never stored as a plain string in DEX)
-    private val S1 = intArrayOf(0x53, 0x6D, 0x61, 0x72, 0x74, 0x56, 0x50, 0x4E, 0x2D, 0x76, 0x31, 0x2E, 0x31, 0x30)
-    private val S2 = intArrayOf(0x41, 0x65, 0x67, 0x69, 0x73, 0x2D, 0x51, 0x75, 0x61, 0x6E, 0x74, 0x75, 0x6D, 0x2D, 0x4B, 0x65, 0x79)
+    private val S1 = intArrayOf(
+        0x53, 0x6D, 0x61, 0x72, 0x74, 0x56, 0x50, 0x4E, 0x2D, 0x76, 0x31, 0x2E, 0x31, 0x30
+    )
+    private val S2 = intArrayOf(
+        0x41, 0x65, 0x67, 0x69, 0x73, 0x2D, 0x51, 0x75, 0x61, 0x6E, 0x74, 0x75, 0x6D, 0x2D, 0x4B, 0x65, 0x79
+    )
     private val AAD_HEADER = "SMARTVPN-V110-AEAD-LOCK".toByteArray(Charsets.UTF_8)
 
     private fun reconstructEnclavePepper(): String {
@@ -234,12 +246,12 @@ object ConfigCryptoHelper {
     ): String {
         if (profile.isImported && profile.isLocked) return ""
         val cleanHwid = targetDeviceId.trim().uppercase()
-        val SingleTargetHwid = if (cleanHwid.contains(",")) "" else cleanHwid
+        val singleTargetHwid = if (cleanHwid.contains(",")) "" else cleanHwid
         val copy = profile.copy(
             id = 0,
             isSelected = true,
-            isImported = true,
-            isLocked = true,
+            isImported = lockConfig,
+            isLocked = lockConfig,
             lockPassphrase = passphrase.trim(),
             lockedDeviceId = cleanHwid
         )
@@ -251,7 +263,7 @@ object ConfigCryptoHelper {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
             Cipher.ENCRYPT_MODE,
-            deriveHardenedKey(SingleTargetHwid, passphrase, salt),
+            deriveHardenedKey(singleTargetHwid, passphrase, salt),
             GCMParameterSpec(128, iv)
         )
         cipher.updateAAD(AAD_HEADER + salt + iv)
@@ -351,6 +363,7 @@ object ConfigCryptoHelper {
             clean.startsWith("SVPN-CLOUD:") -> clean.removePrefix("SVPN-CLOUD:")
             else -> return null
         }
+
         val combined = try {
             Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE)
         } catch (_: Throwable) {
@@ -394,7 +407,6 @@ object ConfigCryptoHelper {
                         ) {
                             return null
                         }
-                        // All svpn:// imports are locked & protected against viewing/editing/re-sharing
                         return parsed.copy(
                             id = 0,
                             isSelected = true,
@@ -406,7 +418,6 @@ object ConfigCryptoHelper {
             }
             return null
         }
-
         return null
     }
 }
@@ -477,7 +488,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch(Dispatchers.IO) {
             val copyName = "${profile.name} (Copy 1)"
-            dao.insertProfile(profile.copy(id = 0, name = copyName, isSelected = false, isImported = false, isLocked = false))
+            dao.insertProfile(
+                profile.copy(
+                    id = 0,
+                    name = copyName,
+                    isSelected = false,
+                    isImported = false,
+                    isLocked = false
+                )
+            )
             showToastPill("Duplicated as \"$copyName\"")
         }
     }
@@ -622,7 +641,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 showToastPill("Clipboard is empty")
                 return@launch
             }
-
             val bundle = ConfigCryptoHelper.importBundleUri(cleanText)
             if (!bundle.isNullOrEmpty()) {
                 dao.clearSelection()
@@ -634,13 +652,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 showToastPill("Imported ${bundle.size} locked configs")
                 return@launch
             }
-
             val myHwid = VpnStateBridge.getDeviceHardwareId(appContext)
             val parsed = withContext(Dispatchers.Default) {
                 ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myHwid)
                     ?: VpnConfigParser.parseUri(cleanText)
             }
-
             if (parsed != null) {
                 if (parsed.isLocked) {
                     dao.clearSelection()
@@ -664,4 +680,3 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-// === END OF VpnViewModel.kt ===
