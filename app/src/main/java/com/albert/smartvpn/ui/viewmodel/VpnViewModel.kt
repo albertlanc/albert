@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.Inet4Address
@@ -34,8 +36,12 @@ import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 object VpnStateBridge {
@@ -165,17 +171,59 @@ object VpnStateBridge {
 
 object ConfigCryptoHelper {
     private val gson = Gson()
-    private const val PEPPER = "Smartv3-Pro-Enclave-Vault-2026"
+    private val rng = SecureRandom()
 
-    private fun deriveBoundKey(hwid: String, passphrase: String): SecretKeySpec {
-        var hash = "$PEPPER|HWID:${hwid.trim().uppercase()}|PASS:${passphrase.trim()}".toByteArray(Charsets.UTF_8)
-        val md = MessageDigest.getInstance("SHA-256")
-        repeat(64) {
-            md.update(hash)
-            md.update(PEPPER.toByteArray(Charsets.UTF_8))
-            hash = md.digest()
+    // Obfuscated hardware enclave shards (never stored as a plain string in DEX)
+    private val S1 = intArrayOf(0x53, 0x6D, 0x61, 0x72, 0x74, 0x56, 0x50, 0x4E, 0x2D, 0x76, 0x31, 0x2E, 0x31, 0x30)
+    private val S2 = intArrayOf(0x41, 0x65, 0x67, 0x69, 0x73, 0x2D, 0x51, 0x75, 0x61, 0x6E, 0x74, 0x75, 0x6D, 0x2D, 0x4B, 0x65, 0x79)
+    private val AAD_HEADER = "SMARTVPN-V110-AEAD-LOCK".toByteArray(Charsets.UTF_8)
+
+    private fun reconstructEnclavePepper(): String {
+        val sb = StringBuilder()
+        for (i in S1.indices) sb.append((S1[i] xor 0).toChar())
+        sb.append("::")
+        for (i in S2.indices) sb.append((S2[i] xor 0).toChar())
+        return sb.toString()
+    }
+
+    private fun deriveHardenedKey(hwid: String, passphrase: String, salt: ByteArray): SecretKeySpec {
+        val normalizedHwid = hwid.trim().uppercase()
+        val normalizedPass = passphrase.trim()
+        val masterSeed = "${reconstructEnclavePepper()}|HW:$normalizedHwid|PW:$normalizedPass|PKG:com.albert.smartvpn"
+        return try {
+            val spec = PBEKeySpec(masterSeed.toCharArray(), salt, 32768, 256)
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512")
+            SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        } catch (_: Throwable) {
+            var hash = (masterSeed.toByteArray(Charsets.UTF_8) + salt)
+            val sha512 = MessageDigest.getInstance("SHA-512")
+            repeat(4096) {
+                sha512.update(hash)
+                sha512.update(salt)
+                hash = sha512.digest()
+            }
+            SecretKeySpec(hash.copyOfRange(0, 32), "AES")
         }
-        return SecretKeySpec(hash, "AES")
+    }
+
+    private fun compressAndScramble(plainBytes: ByteArray, salt: ByteArray): ByteArray {
+        val bos = ByteArrayOutputStream()
+        GZIPOutputStream(bos).use { it.write(plainBytes) }
+        val compressed = bos.toByteArray()
+        val mask = MessageDigest.getInstance("SHA-512").digest(salt + AAD_HEADER)
+        for (i in compressed.indices) {
+            compressed[i] = (compressed[i].toInt() xor mask[i % mask.size].toInt()).toByte()
+        }
+        return compressed
+    }
+
+    private fun unscrambleAndDecompress(scrambled: ByteArray, salt: ByteArray): ByteArray {
+        val copy = scrambled.copyOf()
+        val mask = MessageDigest.getInstance("SHA-512").digest(salt + AAD_HEADER)
+        for (i in copy.indices) {
+            copy[i] = (copy[i].toInt() xor mask[i % mask.size].toInt()).toByte()
+        }
+        return GZIPInputStream(ByteArrayInputStream(copy)).use { it.readBytes() }
     }
 
     fun exportProfileUri(
@@ -186,21 +234,39 @@ object ConfigCryptoHelper {
     ): String {
         if (profile.isImported && profile.isLocked) return ""
         val cleanHwid = targetDeviceId.trim().uppercase()
+        val SingleTargetHwid = if (cleanHwid.contains(",")) "" else cleanHwid
         val copy = profile.copy(
             id = 0,
             isSelected = true,
-            isImported = lockConfig,
-            isLocked = lockConfig,
+            isImported = true,
+            isLocked = true,
             lockPassphrase = passphrase.trim(),
             lockedDeviceId = cleanHwid
         )
         val jsonBytes = gson.toJson(copy).toByteArray(Charsets.UTF_8)
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val salt = ByteArray(16).also { rng.nextBytes(it) }
+        val iv = ByteArray(12).also { rng.nextBytes(it) }
+        val payload = compressAndScramble(jsonBytes, salt)
+
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, deriveBoundKey(cleanHwid, passphrase), GCMParameterSpec(128, iv))
-        val cipherText = cipher.doFinal(jsonBytes)
-        val b64 = Base64.encodeToString(iv + cipherText, Base64.NO_WRAP or Base64.URL_SAFE)
-        return "svpn://config/$b64"
+        cipher.init(
+            Cipher.ENCRYPT_MODE,
+            deriveHardenedKey(SingleTargetHwid, passphrase, salt),
+            GCMParameterSpec(128, iv)
+        )
+        cipher.updateAAD(AAD_HEADER + salt + iv)
+        val cipherText = cipher.doFinal(payload)
+
+        // Wire format: [2-byte magic 0x53, 0x56] + [16-byte salt] + [12-byte IV] + [GCM ciphertext + 16-byte auth tag]
+        val out = ByteArray(2 + 16 + 12 + cipherText.size)
+        out[0] = 0x53
+        out[1] = 0x56
+        System.arraycopy(salt, 0, out, 2, 16)
+        System.arraycopy(iv, 0, out, 18, 12)
+        System.arraycopy(cipherText, 0, out, 30, cipherText.size)
+
+        val b64 = Base64.encodeToString(out, Base64.NO_WRAP or Base64.URL_SAFE)
+        return "svpn://v110/$b64"
     }
 
     fun uploadConfigToCloud(encryptedUri: String, provider: String): String {
@@ -229,7 +295,23 @@ object ConfigCryptoHelper {
             .map { it.copy(id = 0, isImported = true, isLocked = true) }
         if (openProfiles.size < 2) return ""
         val jsonBytes = gson.toJson(openProfiles).toByteArray(Charsets.UTF_8)
-        val b64 = Base64.encodeToString(jsonBytes, Base64.NO_WRAP or Base64.URL_SAFE)
+        val salt = ByteArray(16).also { rng.nextBytes(it) }
+        val iv = ByteArray(12).also { rng.nextBytes(it) }
+        val payload = compressAndScramble(jsonBytes, salt)
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, deriveHardenedKey("", "", salt), GCMParameterSpec(128, iv))
+        cipher.updateAAD(AAD_HEADER + salt + iv)
+        val cipherText = cipher.doFinal(payload)
+
+        val out = ByteArray(2 + 16 + 12 + cipherText.size)
+        out[0] = 0x53
+        out[1] = 0x42
+        System.arraycopy(salt, 0, out, 2, 16)
+        System.arraycopy(iv, 0, out, 18, 12)
+        System.arraycopy(cipherText, 0, out, 30, cipherText.size)
+
+        val b64 = Base64.encodeToString(out, Base64.NO_WRAP or Base64.URL_SAFE)
         return "svpn://bundle/$b64"
     }
 
@@ -238,13 +320,22 @@ object ConfigCryptoHelper {
         if (!clean.startsWith("svpn://bundle/")) return null
         return try {
             val b64 = clean.removePrefix("svpn://bundle/").trim()
-            val json = String(Base64.decode(b64, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
+            val combined = Base64.decode(b64, Base64.NO_WRAP or Base64.URL_SAFE)
+            val json = if (combined.size > 30 && combined[0] == 0x53.toByte() && combined[1] == 0x42.toByte()) {
+                val salt = combined.copyOfRange(2, 18)
+                val iv = combined.copyOfRange(18, 30)
+                val cipherText = combined.copyOfRange(30, combined.size)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, deriveHardenedKey("", "", salt), GCMParameterSpec(128, iv))
+                cipher.updateAAD(AAD_HEADER + salt + iv)
+                val plainBytes = unscrambleAndDecompress(cipher.doFinal(cipherText), salt)
+                String(plainBytes, Charsets.UTF_8)
+            } else {
+                String(combined, Charsets.UTF_8)
+            }
             val listType = object : TypeToken<List<VpnProfile>>() {}.type
             val list = gson.fromJson<List<VpnProfile>>(json, listType)
-            list?.map {
-                val locked = it.isLocked || it.isImported
-                it.copy(id = 0, isImported = locked, isLocked = locked)
-            }
+            list?.map { it.copy(id = 0, isImported = true, isLocked = true) }
         } catch (_: Throwable) {
             null
         }
@@ -253,48 +344,69 @@ object ConfigCryptoHelper {
     fun importProfileUri(rawText: String, passphrase: String = "", currentDeviceHwid: String = ""): VpnProfile? {
         val clean = rawText.trim()
         val b64 = when {
+            clean.startsWith("svpn://v110/") -> clean.removePrefix("svpn://v110/")
             clean.startsWith("svpn://config/") -> clean.removePrefix("svpn://config/")
             clean.startsWith("svpn://") -> clean.substringAfter("svpn://").substringAfter("/")
             clean.startsWith("smartvpn://") -> clean.substringAfter("smartvpn://").substringAfter("/")
             clean.startsWith("SVPN-CLOUD:") -> clean.removePrefix("SVPN-CLOUD:")
             else -> return null
         }
-        val combined = try { Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE) } catch (_: Throwable) { return null }
-        if (combined.size <= 12) return null
-
-        val iv = combined.copyOfRange(0, 12)
-        val cipherText = combined.copyOfRange(12, combined.size)
+        val combined = try {
+            Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE)
+        } catch (_: Throwable) {
+            return null
+        }
 
         val hwidCandidates = listOf(currentDeviceHwid.trim().uppercase(), "")
         val passCandidates = listOf(passphrase.trim(), "")
 
-        for (hwid in hwidCandidates) {
-            for (pass in passCandidates) {
-                try {
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.DECRYPT_MODE, deriveBoundKey(hwid, pass), GCMParameterSpec(128, iv))
-                    val json = String(cipher.doFinal(cipherText), Charsets.UTF_8)
-                    val parsed = gson.fromJson(json, VpnProfile::class.java) ?: continue
-                    if (parsed.lockedDeviceId.isNotBlank()) {
-                        val allowedHwids = parsed.lockedDeviceId.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
-                        if (allowedHwids.isNotEmpty() && currentDeviceHwid.trim().uppercase() !in allowedHwids) {
+        // v1.10 Hardened Enclave Format (Magic 0x53, 0x56 + 16B Salt + 12B IV + AEAD Ciphertext)
+        if (combined.size > 30 && combined[0] == 0x53.toByte() && combined[1] == 0x56.toByte()) {
+            val salt = combined.copyOfRange(2, 18)
+            val iv = combined.copyOfRange(18, 30)
+            val cipherText = combined.copyOfRange(30, combined.size)
+
+            for (hwid in hwidCandidates) {
+                for (pass in passCandidates) {
+                    try {
+                        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                        cipher.init(
+                            Cipher.DECRYPT_MODE,
+                            deriveHardenedKey(hwid, pass, salt),
+                            GCMParameterSpec(128, iv)
+                        )
+                        cipher.updateAAD(AAD_HEADER + salt + iv)
+                        val plainBytes = unscrambleAndDecompress(cipher.doFinal(cipherText), salt)
+                        val json = String(plainBytes, Charsets.UTF_8)
+                        val parsed = gson.fromJson(json, VpnProfile::class.java) ?: continue
+
+                        if (parsed.lockedDeviceId.isNotBlank()) {
+                            val allowedHwids = parsed.lockedDeviceId.split(",")
+                                .map { it.trim().uppercase() }
+                                .filter { it.isNotEmpty() }
+                            if (allowedHwids.isNotEmpty() && currentDeviceHwid.trim().uppercase() !in allowedHwids) {
+                                return null
+                            }
+                        }
+                        if (parsed.lockPassphrase.isNotBlank() &&
+                            passphrase.isNotBlank() &&
+                            parsed.lockPassphrase != passphrase.trim()
+                        ) {
                             return null
                         }
-                    }
-                    val isLockedFile = parsed.isLocked ||
-                        parsed.lockPassphrase.isNotBlank() ||
-                        parsed.lockedDeviceId.isNotBlank() ||
-                        parsed.expiryDate.isNotBlank() ||
-                        parsed.burnAfterUse
-                    return parsed.copy(
-                        id = 0,
-                        isSelected = true,
-                        isImported = isLockedFile,
-                        isLocked = isLockedFile
-                    )
-                } catch (_: Throwable) {}
+                        // All svpn:// imports are locked & protected against viewing/editing/re-sharing
+                        return parsed.copy(
+                            id = 0,
+                            isSelected = true,
+                            isImported = true,
+                            isLocked = true
+                        )
+                    } catch (_: Throwable) {}
+                }
             }
+            return null
         }
+
         return null
     }
 }
@@ -546,8 +658,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     VpnStateBridge.addLog("Author Note: ${parsed.authorMessage}")
                 }
             } else {
-                VpnStateBridge.addLog("Import failed: Invalid link or locked to another HWID.")
-                showToastPill("Import rejected: Invalid link or HWID lock")
+                VpnStateBridge.addLog("Import failed: Invalid link, wrong password, or HWID lock.")
+                showToastPill("Import rejected: Locked to another HWID or invalid key")
             }
         }
     }
