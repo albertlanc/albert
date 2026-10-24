@@ -3,12 +3,12 @@ package com.albert.smartvpn.engine
 import android.util.Log
 import com.albert.smartvpn.ui.viewmodel.VpnStateBridge
 import java.io.File
-import kotlin.concurrent.thread
+import java.util.concurrent.atomic.AtomicBoolean
 
 object Tun2Socks {
     private const val TAG = "Tun2Socks"
-    @Volatile private var isRunning = false
-    @Volatile private var nativeLoaded = false
+    private val isRunning = AtomicBoolean(false)
+    private var nativeLoaded = false
 
     init {
         try {
@@ -28,52 +28,64 @@ object Tun2Socks {
     @JvmStatic
     private external fun TProxyGetStats(): LongArray?
 
-    fun startTunnel(fd: Int, socksHost: String = "127.0.0.1", socksPort: Int = 10808) {
-        if (!nativeLoaded) {
-            VpnStateBridge.addLog("ERROR: Native Tun2Socks library not loaded.")
-            return
-        }
-        if (isRunning) {
-            stopTunnel()
-        }
+    fun startTunnel(fd: Int, socksHost: String, socksPort: Int): Boolean {
+        if (fd < 0) return false
+        if (isRunning.get()) stopTunnel()
 
-        isRunning = true
-        thread(start = true, name = "Tun2Socks-Worker") {
-            try {
-                val configFile = File.createTempFile("tproxy_", ".yml")
-                val yaml = """
-                    tunnel:
-                      mtu: 1400
-                      ipv4: 10.0.0.2
-                    socks5:
-                      port: $socksPort
-                      address: $socksHost
-                      udp: 'udp'
-                    misc:
-                      task-stack-size: 81920
-                      connect-timeout: 10000
-                      read-write-timeout: 60000
-                      log-level: none
-                """.trimIndent()
-                configFile.writeText(yaml)
-                TProxyStartService(configFile.absolutePath, fd)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Tun2Socks error: ${t.message}")
-            } finally {
-                isRunning = false
+        return try {
+            val configContent = """
+                tunnel:
+                  mtu: 1400
+                  ipv4: 10.0.0.2
+
+                socks5:
+                  port: $socksPort
+                  address: $socksHost
+                  udp: 'udp'
+
+                misc:
+                  task-stack-size: 81920
+                  connect-timeout: 10000
+                  read-write-timeout: 60000
+            """.trimIndent()
+
+            val configFile = File.createTempFile("smartvpn_tproxy_", ".yml")
+            configFile.writeText(configContent)
+
+            isRunning.set(true)
+            Thread({
+                try {
+                    if (nativeLoaded) {
+                        TProxyStartService(configFile.absolutePath, fd)
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "TProxy runtime error: ${t.message}")
+                } finally {
+                    isRunning.set(false)
+                }
+            }, "SmartVPN-Tun2Socks").apply {
+                isDaemon = true
+                start()
             }
+
+            VpnStateBridge.addLog("TUN interface bridged to SOCKS5 ($socksHost:$socksPort)")
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to start Tun2Socks: ${t.message}")
+            isRunning.set(false)
+            false
         }
     }
 
     fun stopTunnel() {
-        if (!nativeLoaded || !isRunning) return
+        if (!isRunning.getAndSet(false)) return
         try {
-            TProxyStopService()
+            if (nativeLoaded) {
+                TProxyStopService()
+            }
         } catch (t: Throwable) {
-            Log.e(TAG, "Stop error: ${t.message}")
-        } finally {
-            isRunning = false
+            Log.e(TAG, "Error stopping Tun2Socks: ${t.message}")
         }
     }
 }
-// === END OF FILE 2 ===
+// === END OF Tun2Socks.kt ===
