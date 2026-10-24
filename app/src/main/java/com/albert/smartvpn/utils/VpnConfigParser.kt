@@ -29,21 +29,21 @@ object VpnConfigParser {
     }
 
     fun toStandardUri(profile: VpnProfile): String {
-        // Only block locked imported files; open imported files can be shared
         if (profile.isImported && profile.isLocked) return ""
         val encName = URLEncoder.encode(profile.name, "UTF-8")
         return when (profile.protocol.uppercase()) {
             "TROJAN" -> "trojan://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
-            "VLESS" -> "vless://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&pbk=${profile.pbk}&sid=${profile.sid}&fp=${profile.utlsFingerprint}&flow=${profile.flow}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
+            "VLESS" -> "vless://${profile.uuid}@${profile.server}:${profile.port}?security=${profile.security}&type=${profile.network}&sni=${profile.sni}&pbk=${profile.pbk}&sid=${profile.sid}&fp=${profile.utlsFingerprint}&path=${URLEncoder.encode(profile.path, "UTF-8")}#$encName"
             "VMESS" -> {
-                val json = """{"v":"2","ps":"${profile.name}","add":"${profile.server}","port":"${profile.port}","id":"${profile.uuid}","aid":"0","net":"${profile.network}","type":"none","host":"${profile.wsHost.ifBlank { profile.sni }}","path":"${profile.path}","tls":"${profile.security}","sni":"${profile.sni}"}"""
+                val json = """{"v":"2","ps":"${profile.name}","add":"${profile.server}","port":"${profile.port}","id":"${profile.uuid}","aid":"0","net":"${profile.network}","type":"none","host":"${profile.wsHost.ifBlank { profile.sni }}","path":"${profile.path}","tls":"${profile.security}"}"""
                 "vmess://" + Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             }
             "SHADOWSOCKS" -> {
                 val userB64 = Base64.encodeToString("${profile.ssMethod}:${profile.uuid}".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
                 "ss://$userB64@${profile.server}:${profile.port}#$encName"
             }
-            "HYSTERIA2" -> "hy2://${profile.hy2Password.ifBlank { profile.uuid }}@${profile.server}:${profile.port}?sni=${profile.sni}&obfs=${profile.hy2Obfs}&obfs-password=${profile.hy2ObfsPassword}&mport=${profile.hy2PortHopping}#$encName"
+            "HYSTERIA2" -> "hy2://${profile.hy2Password.ifBlank { profile.uuid }}@${profile.server}:${profile.port}?sni=${profile.sni}#$encName"
+            "UDPCUSTOM" -> "udpcustom://${profile.sshUser}:${profile.sshPass}@${profile.server}:${profile.port}#$encName"
             else -> "ssh://${profile.sshUser}:${profile.sshPass}@${profile.server}:${profile.port}?sni=${profile.sni}&payload=${URLEncoder.encode(profile.payload, "UTF-8")}#$encName"
         }
     }
@@ -67,6 +67,7 @@ object VpnConfigParser {
                     text.startsWith("hysteria2://", ignoreCase = true) -> parseHysteria2(text)
                 text.startsWith("slowdns://", ignoreCase = true) ||
                     text.startsWith("dnstt://", ignoreCase = true) -> parseSlowDnsUri(text)
+                text.startsWith("udpcustom://", ignoreCase = true) -> parseUdpCustomUri(text)
                 text.startsWith("ssh://", ignoreCase = true) -> parseSshUri(text)
                 text.contains("[Interface]", ignoreCase = true) &&
                     text.contains("[Peer]", ignoreCase = true) -> parseWireGuardConf(text)
@@ -78,8 +79,7 @@ object VpnConfigParser {
         } catch (_: Throwable) {
             null
         }
-        // Open files imported via clipboard/file stay unlocked (isImported = false, isLocked = false)
-        // so the user can edit them, lock them, and share them
+
         return parsed?.copy(isImported = false, isLocked = false)
     }
 
@@ -108,6 +108,32 @@ object VpnConfigParser {
         }
     }
 
+    private fun parseUdpCustomUri(uriString: String): VpnProfile? {
+        val uri = Uri.parse(uriString)
+        val host = uri.host?.trim() ?: return null
+        val port = if (uri.port > 0) uri.port else 36712
+        val userInfo = uri.userInfo ?: ""
+        val sshUser = userInfo.substringBefore(":")
+        val sshPass = userInfo.substringAfter(":", "")
+        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
+            ?: "UDPCUSTOM-$host"
+
+        return VpnProfile(
+            name = remark,
+            protocol = "UDPCUSTOM",
+            server = host,
+            port = port,
+            uuid = sshUser,
+            sshUser = sshUser,
+            sshPass = sshPass,
+            network = "udp",
+            countryFlag = detectFlag(host, remark),
+            isSelected = true,
+            isImported = false,
+            isLocked = false
+        )
+    }
+
     private fun parseVlessOrTrojan(uriString: String, protocol: String): VpnProfile? {
         val uri = Uri.parse(uriString)
         val userInfo = uri.userInfo?.trim() ?: return null
@@ -119,13 +145,9 @@ object VpnConfigParser {
         val securityParam = uri.getQueryParameter("security")?.lowercase()
             ?: if (port in listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)) "none" else "tls"
         val networkParam = uri.getQueryParameter("type")?.lowercase() ?: "ws"
-        val sniParam = uri.getQueryParameter("sni")
-            ?: uri.getQueryParameter("host")
-            ?: host
+        val sniParam = uri.getQueryParameter("sni") ?: uri.getQueryParameter("host") ?: host
         val wsHostParam = uri.getQueryParameter("host") ?: sniParam
-        val pathParam = uri.getQueryParameter("path")
-            ?: uri.getQueryParameter("serviceName")
-            ?: "/"
+        val pathParam = uri.getQueryParameter("path") ?: uri.getQueryParameter("serviceName") ?: "/"
         val pbkParam = uri.getQueryParameter("pbk") ?: ""
         val sidParam = uri.getQueryParameter("sid") ?: ""
         val spxParam = uri.getQueryParameter("spx") ?: "/"
@@ -230,21 +252,14 @@ object VpnConfigParser {
     }
 
     private fun parseHysteria2(uriString: String): VpnProfile? {
-        val normalized = if (uriString.startsWith("hy2://", true)) {
-            "hysteria2://" + uriString.substring(6)
-        } else {
-            uriString
-        }
+        val normalized = if (uriString.startsWith("hy2://", true)) "hysteria2://" + uriString.substring(6) else uriString
         val uri = Uri.parse(normalized)
         val password = uri.userInfo?.let { URLDecoder.decode(it, "UTF-8") }?.trim() ?: ""
         val host = uri.host?.trim() ?: return null
         val port = if (uri.port > 0) uri.port else 443
-        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "HYSTERIA2-$host"
+        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() } ?: "HYSTERIA2-$host"
 
-        val sni = uri.getQueryParameter("sni")
-            ?: uri.getQueryParameter("peer")
-            ?: host
+        val sni = uri.getQueryParameter("sni") ?: uri.getQueryParameter("peer") ?: host
         val obfs = uri.getQueryParameter("obfs") ?: ""
         val obfsPassword = uri.getQueryParameter("obfs-password") ?: ""
         val mport = uri.getQueryParameter("mport") ?: ""
@@ -284,8 +299,7 @@ object VpnConfigParser {
         val sshPass = userInfo.substringAfter(":", "")
         val dnsIp = uri.getQueryParameter("dns") ?: "8.8.8.8:53"
         val pubKey = uri.getQueryParameter("pubkey") ?: ""
-        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "SSH-DNSTT-$nsDomain"
+        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() } ?: "SSH-DNSTT-$nsDomain"
 
         return VpnProfile(
             name = remark,
@@ -323,8 +337,7 @@ object VpnConfigParser {
             sni.isNotBlank() -> "SSH-TLS"
             else -> "SSH-DIRECT"
         }
-        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
-            ?: "$mode-$host"
+        val remark = uri.fragment?.let { URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() } ?: "$mode-$host"
 
         return VpnProfile(
             name = remark,
@@ -373,7 +386,6 @@ object VpnConfigParser {
                 }
             }
         }
-
         if (endpointHost.isEmpty() || privateKey.isEmpty() || publicKey.isEmpty()) return null
 
         return VpnProfile(
