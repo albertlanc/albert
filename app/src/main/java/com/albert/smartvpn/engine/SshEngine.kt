@@ -33,7 +33,9 @@ import java.security.Security
 import java.security.cert.X509Certificate
 import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 import javax.net.ssl.SNIHostName
@@ -47,7 +49,11 @@ object SshEngine {
     private const val TAG = "SshEngine"
     private val sshPool = CopyOnWriteArrayList<SSHClient>()
     private val poolSelector = AtomicInteger(0)
+
     @Volatile private var isRunning = false
+    @Volatile private var activeUdpCustomHost = ""
+    @Volatile private var activeUdpCustomPort = 0
+
     private var localServer: ServerSocket? = null
     private val activeBridges = CopyOnWriteArrayList<ServerSocket>()
     private val activeUdpSockets = CopyOnWriteArrayList<DatagramSocket>()
@@ -92,6 +98,7 @@ object SshEngine {
         } catch (_: Throwable) {
             false
         }
+
         if (!x25519Works) {
             config.keyExchangeFactories = config.keyExchangeFactories.filterNot {
                 it.name.contains("25519", true) || it.name.contains("448", true)
@@ -117,7 +124,6 @@ object SshEngine {
                     it.name.contains("group14", true)
             }
             if (fastKex.isNotEmpty()) config.keyExchangeFactories = fastKex
-
             val fastMacs = config.macFactories.filter {
                 it.name.equals("hmac-sha2-256", true) || it.name.equals("hmac-sha1", true)
             }
@@ -164,7 +170,7 @@ object SshEngine {
         emitUiLogs: Boolean
     ): SSHClient? {
         val sshConfig = buildAndroidSafeSshConfig(isSlowDns)
-        val isPlainDirect = isSlowDns || mode == "SSH" || mode == "SSH-DIRECT"
+        val isPlainDirect = isSlowDns || mode == "SSH" || mode == "SSH-DIRECT" || mode == "UDPCUSTOM"
 
         val client = SSHClient(sshConfig).apply {
             addHostKeyVerifier(object : HostKeyVerifier {
@@ -212,7 +218,8 @@ object SshEngine {
             }
         }
 
-        if (!isPlainDirect) client.connect("127.0.0.1", port) else client.connect(cleanHost, port)
+        val sshConnectPort = if (mode == "UDPCUSTOM" && (port == 1 || port > 65000 || port == 7300 || port == 36712)) 22 else port
+        if (!isPlainDirect) client.connect("127.0.0.1", sshConnectPort) else client.connect(cleanHost, sshConnectPort)
         if (emitUiLogs) {
             VpnStateBridge.addLog("Authenticating user '$cleanUser'...")
         }
@@ -250,8 +257,16 @@ object SshEngine {
         val mode = protocolMode.uppercase()
 
         if (cleanHost.isEmpty() || cleanUser.isEmpty() || pass.isEmpty()) {
-            VpnStateBridge.addLog("Connection failed: Missing SSH host, username, or password.")
+            VpnStateBridge.addLog("Connection failed: Missing host, username, or password.")
             return false
+        }
+
+        if (mode == "UDPCUSTOM") {
+            activeUdpCustomHost = cleanHost
+            activeUdpCustomPort = if (port > 0) port else 36712
+        } else {
+            activeUdpCustomHost = ""
+            activeUdpCustomPort = 0
         }
 
         return try {
@@ -409,7 +424,7 @@ object SshEngine {
 
                     return try {
                         sslSock.soTimeout = 10000
-                        val wsReq = "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
+                        val wsReq = "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
                         sslSock.getOutputStream().apply {
                             write(wsReq.toByteArray(Charsets.UTF_8))
                             flush()
@@ -421,7 +436,7 @@ object SshEngine {
                         try { sslSock.close() } catch (_: Throwable) {}
                         val fbSsl = openSslSocket(tcpHost, tcpPort, sniHost, true)
                         val fbIn = PushbackInputStream(fbSsl.getInputStream(), 32768)
-                        val wsReq = "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
+                        val wsReq = "GET / HTTP/1.1\r\nHost: $targetHost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
                         fbSsl.getOutputStream().apply {
                             write(wsReq.toByteArray(Charsets.UTF_8))
                             flush()
@@ -446,10 +461,9 @@ object SshEngine {
                 }
 
                 val pushbackIn = PushbackInputStream(activeSocket.getInputStream(), 32768)
-
                 val effectivePayload = when {
                     payloadTemplate.isNotBlank() -> payloadTemplate
-                    hasPayload -> "GET / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf]User-Agent: [ua][crlf][crlf]"
+                    hasPayload -> "GET / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]"
                     hasProxy -> "CONNECT [host_port] HTTP/1.1[crlf]Host: [host_port][crlf][crlf]"
                     else -> ""
                 }
@@ -474,6 +488,7 @@ object SshEngine {
                     activeSocket.soTimeout = 10000
                     try { consumeHttpUpgrade(pushbackIn, emitUiLogs) } finally { activeSocket.soTimeout = prevTimeout }
                 }
+
                 return PushbackWrappedSocket(activeSocket, pushbackIn)
             }
         }
@@ -571,21 +586,31 @@ object SshEngine {
     }
 
     private fun openSshForwardSocket(targetHost: String, targetPort: Int): Pair<ServerSocket, Socket> {
-        val bridgeServer = ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
+        val bridgeServer = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val bridgePort = bridgeServer.localPort
         activeBridges.add(bridgeServer)
 
-        val selected = pickSshClient()
+        val selected = pickSshClient() ?: throw IllegalStateException("No authenticated SSH client")
         val params = Parameters("127.0.0.1", bridgePort, targetHost, targetPort)
+        val readyLatch = CountDownLatch(1)
+
         ioThreadPool.execute {
-            try { selected?.newLocalPortForwarder(params, bridgeServer)?.listen() } catch (_: Throwable) {}
+            try {
+                val forwarder = selected.newLocalPortForwarder(params, bridgeServer)
+                readyLatch.countDown()
+                forwarder.listen()
+            } catch (_: Throwable) {
+                readyLatch.countDown()
+            }
         }
 
+        readyLatch.await(1500, TimeUnit.MILLISECONDS)
         val bridgeSocket = Socket().apply {
             tcpNoDelay = VpnStateBridge.tcpNoDelay.value
+            keepAlive = true
             sendBufferSize = socketBufSize()
             receiveBufferSize = socketBufSize()
-            connect(InetSocketAddress("127.0.0.1", bridgePort), 8000)
+            connect(InetSocketAddress("127.0.0.1", bridgePort), 10000)
         }
         return Pair(bridgeServer, bridgeSocket)
     }
@@ -597,42 +622,39 @@ object SshEngine {
             client.tcpNoDelay = VpnStateBridge.tcpNoDelay.value
             client.sendBufferSize = socketBufSize()
             client.receiveBufferSize = socketBufSize()
-            val ins = client.getInputStream()
-            val outs = client.getOutputStream()
 
-            if (ins.read() != 5) { client.close(); return }
+            val ins = DataInputStream(BufferedInputStream(client.getInputStream()))
+            val outs = BufferedOutputStream(client.getOutputStream())
+
+            val ver = ins.read()
+            if (ver != 5) return
             val nMethods = ins.read()
             if (nMethods > 0) {
                 val mBuf = ByteArray(nMethods)
-                var r = 0
-                while (r < nMethods) {
-                    val n = ins.read(mBuf, r, nMethods - r)
-                    if (n == -1) break
-                    r += n
-                }
+                ins.readFully(mBuf)
             }
             outs.write(byteArrayOf(0x05, 0x00))
             outs.flush()
 
             val reqVer = ins.read()
             val cmd = ins.read()
-            ins.read()
+            ins.read() // RSV
             val atyp = ins.read()
-            if (reqVer != 5) { client.close(); return }
+            if (reqVer != 5) return
 
             val targetHost = when (atyp) {
-                1 -> { val a = ByteArray(4); ins.read(a); InetAddress.getByAddress(a).hostAddress ?: "" }
-                3 -> { val l = ins.read(); val d = ByteArray(l); ins.read(d); String(d) }
-                4 -> { val a = ByteArray(16); ins.read(a); InetAddress.getByAddress(a).hostAddress ?: "" }
-                else -> ""
+                1 -> { val a = ByteArray(4); ins.readFully(a); InetAddress.getByAddress(a).hostAddress ?: "" }
+                3 -> { val l = ins.read(); val d = ByteArray(l); ins.readFully(d); String(d, Charsets.UTF_8) }
+                4 -> { val a = ByteArray(16); ins.readFully(a); InetAddress.getByAddress(a).hostAddress ?: "" }
+                else -> return
             }
-            val targetPort = (ins.read() shl 8) or ins.read()
+            val targetPort = ins.readUnsignedShort()
 
             if (cmd == 3) {
                 handleSocks5UdpAssociate(client, ins, outs)
                 return
             }
-            if (cmd != 1) { client.close(); return }
+            if (cmd != 1) return
 
             val pair = openSshForwardSocket(targetHost, targetPort)
             bridgeServer = pair.first
@@ -653,17 +675,15 @@ object SshEngine {
                         sshOut.write(buf, 0, n)
                         sshOut.flush()
                     }
-                } catch (_: Throwable) {
-                } finally {
-                    try { bridgeSocket.close() } catch (_: Throwable) {}
-                }
+                    try { bridgeSocket.shutdownOutput() } catch (_: Throwable) {}
+                } catch (_: Throwable) {}
             }
 
-            val buf = ByteArray(65536)
+            val downBuf = ByteArray(65536)
             while (isRunning) {
-                val n = sshIn.read(buf)
+                val n = sshIn.read(downBuf)
                 if (n == -1) break
-                outs.write(buf, 0, n)
+                outs.write(downBuf, 0, n)
                 outs.flush()
             }
             upFuture.cancel(true)
@@ -681,7 +701,15 @@ object SshEngine {
             udpRelay = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
             activeUdpSockets.add(udpRelay)
             val port = udpRelay.localPort
-            outs.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, ((port shr 8) and 0xFF).toByte(), (port and 0xFF).toByte()))
+
+            outs.write(
+                byteArrayOf(
+                    0x05, 0x00, 0x00, 0x01,
+                    127, 0, 0, 1,
+                    ((port shr 8) and 0xFF).toByte(),
+                    (port and 0xFF).toByte()
+                )
+            )
             outs.flush()
 
             val relayRef = udpRelay
@@ -704,38 +732,27 @@ object SshEngine {
                             else -> continue
                         }
                         val dstPort = ((data[offset].toInt() and 0xFF) shl 8) or (data[offset + 1].toInt() and 0xFF)
+
+                        // Drop non-DNS UDP packets so apps immediately use TCP 443 over SSH
+                        if (dstPort != 53) continue
+
                         val payloadStart = offset + 2
                         val header = data.copyOfRange(0, payloadStart)
                         val payload = data.copyOfRange(payloadStart, data.size)
 
                         ioThreadPool.execute {
-                            var bSrv: ServerSocket? = null
-                            var bSock: Socket? = null
-                            try {
-                                val dnsTarget = if (dstPort == 53) dstHost else "1.1.1.1"
-                                val pair = openSshForwardSocket(dnsTarget, 53)
-                                bSrv = pair.first
-                                bSock = pair.second
-                                bSock.soTimeout = 4000
-                                val dos = DataOutputStream(BufferedOutputStream(bSock.getOutputStream()))
-                                val dis = DataInputStream(BufferedInputStream(bSock.getInputStream()))
-                                dos.writeShort(payload.size)
-                                dos.write(payload)
-                                dos.flush()
-                                val rLen = dis.readUnsignedShort()
-                                val rPay = ByteArray(rLen)
-                                dis.readFully(rPay)
-                                val resp = header + rPay
-                                relayRef.send(DatagramPacket(resp, resp.size, clientAddr))
-                            } catch (_: Throwable) {
-                            } finally {
-                                try { bSock?.close() } catch (_: Throwable) {}
-                                try { bSrv?.close(); activeBridges.remove(bSrv) } catch (_: Throwable) {}
+                            val dnsReply = resolveDnsViaSshOrDirect(dstHost, payload)
+                            if (dnsReply != null && dnsReply.isNotEmpty()) {
+                                val resp = header + dnsReply
+                                try {
+                                    relayRef.send(DatagramPacket(resp, resp.size, clientAddr))
+                                } catch (_: Throwable) {}
                             }
                         }
                     } catch (_: Throwable) { break }
                 }
             }
+
             while (isRunning && ins.read() != -1) {}
         } catch (_: Throwable) {
         } finally {
@@ -744,8 +761,54 @@ object SshEngine {
         }
     }
 
+    private fun resolveDnsViaSshOrDirect(preferredDns: String, dnsQuery: ByteArray): ByteArray? {
+        // 1. If UDPCUSTOM host is active or direct UDP DNS works (app is exempted via addDisallowedApplication)
+        val targets = listOf(preferredDns.ifBlank { "1.1.1.1" }, "1.1.1.1", "8.8.8.8").distinct()
+        for (dnsIp in targets) {
+            try {
+                DatagramSocket().use { ds ->
+                    ds.soTimeout = 2000
+                    val addr = InetAddress.getByName(dnsIp)
+                    ds.send(DatagramPacket(dnsQuery, dnsQuery.size, addr, 53))
+                    val rBuf = ByteArray(2048)
+                    val rPkt = DatagramPacket(rBuf, rBuf.size)
+                    ds.receive(rPkt)
+                    if (rPkt.length > 0) {
+                        return rPkt.data.copyOfRange(0, rPkt.length)
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 2. Fallback: DNS-over-TCP through SSH tunnel
+        var bSrv: ServerSocket? = null
+        var bSock: Socket? = null
+        return try {
+            val pair = openSshForwardSocket("1.1.1.1", 53)
+            bSrv = pair.first
+            bSock = pair.second
+            bSock.soTimeout = 3500
+            val dos = DataOutputStream(BufferedOutputStream(bSock.getOutputStream()))
+            val dis = DataInputStream(BufferedInputStream(bSock.getInputStream()))
+            dos.writeShort(dnsQuery.size)
+            dos.write(dnsQuery)
+            dos.flush()
+            val rLen = dis.readUnsignedShort()
+            val rPay = ByteArray(rLen)
+            dis.readFully(rPay)
+            rPay
+        } catch (_: Throwable) {
+            null
+        } finally {
+            try { bSock?.close() } catch (_: Throwable) {}
+            try { bSrv?.close(); activeBridges.remove(bSrv) } catch (_: Throwable) {}
+        }
+    }
+
     fun stopSshTunnel() {
         isRunning = false
+        activeUdpCustomHost = ""
+        activeUdpCustomPort = 0
         activeUdpSockets.forEach { try { it.close() } catch (_: Throwable) {} }
         activeUdpSockets.clear()
         activeBridges.forEach { try { it.close() } catch (_: Throwable) {} }
