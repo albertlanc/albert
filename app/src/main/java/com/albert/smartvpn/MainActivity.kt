@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
                             border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.7f))
                         ) {
                             Text(
-                                text = "QUANTUM STEALTH CORE • v3.5.1 PRO",
+                                text = "QUANTUM STEALTH CORE • v1.10 PRO",
                                 color = Color(0xFF00E5FF),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
@@ -278,7 +278,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // System Readiness Diagnostic HUD
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xFF060E1E),
@@ -297,9 +296,9 @@ class MainActivity : ComponentActivity() {
                                 color = Color(0xFFFFB300)
                             )
                             Text(
-                                text = "✓ [OK] 24-Protocol Stealth Engine Armed\n" +
+                                text = "✓ [OK] 25-Protocol Stealth Engine + UDPCUSTOM Armed\n" +
                                     "✓ [OK] Live SHA-256 Server Fingerprint Verifier\n" +
-                                    "✓ [OK] Open-File Lock & Share Vault Ready",
+                                    "✓ [OK] AES-256-GCM + PBKDF2-SHA512 Lock Vault Ready",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
                                 color = Color(0xFF00E676),
@@ -314,14 +313,14 @@ class MainActivity : ComponentActivity() {
                     ) {
                         SplashFeatureTile(
                             icon = "🛡️",
-                            title = "24 Protocols",
-                            desc = "SSH, TLS, Payload, DNSTT, VLESS Reality, HY2 & WG",
+                            title = "25 Protocols",
+                            desc = "UDPCUSTOM, SSH, TLS, Payload, DNSTT, VLESS Reality, HY2 & WG",
                             modifier = Modifier.weight(1f)
                         )
                         SplashFeatureTile(
                             icon = "🔒",
-                            title = "Smart Lock Vault",
-                            desc = "Lock & share open configs; locked imports stay protected",
+                            title = "AEAD Lock Vault",
+                            desc = "Lock via File, Cloud & QR with unbreakable AES-256-GCM",
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -398,7 +397,7 @@ class MainActivity : ComponentActivity() {
                             .height(54.dp)
                     ) {
                         Text(
-                            text = "INITIALIZE SMART™vPN v3.5.1 ⚡",
+                            text = "INITIALIZE SMART™vPN v1.10 ⚡",
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.sp,
                             letterSpacing = 0.8.sp
@@ -443,8 +442,8 @@ class MainActivity : ComponentActivity() {
         val clipboardManager = LocalClipboardManager.current
         val scope = rememberCoroutineScope()
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-
         val pagerState = rememberPagerState(initialPage = 0, pageCount = { 4 })
+
         var showThemeMenu by remember { mutableStateOf(false) }
         var showUserManual by remember { mutableStateOf(false) }
         var showPlusMenu by remember { mutableStateOf(false) }
@@ -518,7 +517,7 @@ class MainActivity : ComponentActivity() {
                                             color = Color.White
                                         )
                                         Text(
-                                            text = "SMART v3.5.1 PRO EDITION",
+                                            text = "SMART v1.10 PRO EDITION",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFFFFB300),
@@ -588,8 +587,9 @@ class MainActivity : ComponentActivity() {
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                             )
+
                             NavigationDrawerItem(
-                                label = { Text("⚙️  Engine Settings", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("⚙️ Engine Settings", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     VpnStateBridge.activeDrawerScreen.value = "SETTINGS"
@@ -597,7 +597,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("📡  Response Checker", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("📡 Response Checker", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     VpnStateBridge.activeDrawerScreen.value = "RESPONSE_CHECKER"
@@ -605,7 +605,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("📶  ShareNet Hotspot & Proxy", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("📶 ShareNet Hotspot & Proxy", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     VpnStateBridge.activeDrawerScreen.value = "SHARENET"
@@ -613,7 +613,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("🛠️  Network Tools", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("🛠️ Network Tools", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     VpnStateBridge.activeDrawerScreen.value = "NETWORK_TOOLS"
@@ -621,7 +621,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("⚡  Payload Generator", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("⚡ Payload Generator", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     VpnStateBridge.activeDrawerScreen.value = "PAYLOAD_GEN"
@@ -629,7 +629,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("🎨  Themes (10 + Auto Day/Night)", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("🎨 Themes (10 + Auto Day/Night)", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -637,7 +637,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("📖  User Manual & Guide", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("📖 User Manual & Guide", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -645,7 +645,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("ℹ️  About Smart™vPN v3.5.1", fontWeight = FontWeight.SemiBold) },
+                                label = { Text("ℹ️ About Smart™vPN v1.10", fontWeight = FontWeight.SemiBold) },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -653,7 +653,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
 
-                            Divider(modifier = Modifier.padding(vertical = 6.dp))
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+
                             Text(
                                 text = "COMMUNITY & SUPPORT",
                                 style = MaterialTheme.typography.labelSmall,
@@ -661,8 +662,9 @@ class MainActivity : ComponentActivity() {
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                             )
+
                             NavigationDrawerItem(
-                                label = { Text("📢  Telegram Channel") },
+                                label = { Text("📢 Telegram Channel") },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -670,7 +672,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("💬  Telegram Group") },
+                                label = { Text("💬 Telegram Group") },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -678,15 +680,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("🟢  WhatsApp Community") },
+                                label = { Text("🟢 WhatsApp Community") },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
-                                    openExternalUrl("https://chat.whatsapp.com/G9Jb6bgmvFqDAei8oVFU5k?s=cl&p=a&mlu=4&ilr=4")
+                                    openExternalUrl("https://chat.whatsapp.com/G9Jb6bgmvFqDAei8oVFU5k")
                                 }
                             )
                             NavigationDrawerItem(
-                                label = { Text("🔗  Share Smart™vPN") },
+                                label = { Text("🔗 Share Smart™vPN") },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -697,13 +699,16 @@ class MainActivity : ComponentActivity() {
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = {},
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB300), contentColor = Color.Black),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFFFB300),
+                                    contentColor = Color.Black
+                                ),
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(46.dp)
                             ) {
-                                Text("👑  SMART v3.5.1 PRO UNLOCKED", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                Text("👑 SMART v1.10 PRO UNLOCKED", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -729,7 +734,7 @@ class MainActivity : ComponentActivity() {
                                     color = Color(0xFFFFB300)
                                 ) {
                                     Text(
-                                        text = "v3.5.1",
+                                        text = "v1.10",
                                         color = Color.Black,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.ExtraBold,
@@ -763,7 +768,6 @@ class MainActivity : ComponentActivity() {
                             IconButton(onClick = { showUserManual = true }) {
                                 Text("📖", fontSize = 18.sp)
                             }
-
                             Box {
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
@@ -800,7 +804,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Import from File", fontWeight = FontWeight.SemiBold) },
+                                        text = { Text("Import from File (.svpn)", fontWeight = FontWeight.SemiBold) },
                                         onClick = {
                                             showPlusMenu = false
                                             try { filePickerLauncher.launch("*/*") } catch (_: Throwable) {}
@@ -814,7 +818,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Scan QR Code", fontWeight = FontWeight.SemiBold) },
+                                        text = { Text("Scan / Import QR Code", fontWeight = FontWeight.SemiBold) },
                                         onClick = {
                                             showPlusMenu = false
                                             showQrScannerModal = true
@@ -837,7 +841,7 @@ class MainActivity : ComponentActivity() {
                                             if (activeProfile == null) {
                                                 viewModel.showToastPill("No active configuration to export")
                                             } else if (activeProfile.isImported && activeProfile.isLocked) {
-                                                viewModel.showToastPill("Locked imported configurations cannot be shared or exported")
+                                                viewModel.showToastPill("Locked imported configurations cannot be shared")
                                             } else {
                                                 scope.launch {
                                                     pagerState.animateScrollToPage(1)
@@ -852,11 +856,11 @@ class MainActivity : ComponentActivity() {
                                             showPlusMenu = false
                                             val openList = profiles.filter { !(it.isImported && it.isLocked) }
                                             if (openList.size < 2) {
-                                                viewModel.showToastPill("You need at least 2 open/manual configs to export a bundle.")
+                                                viewModel.showToastPill("You need at least 2 open/manual configs to export a bundle")
                                             } else {
                                                 val bundleUri = ConfigCryptoHelper.exportLoadBalanceBundle(openList)
                                                 clipboardManager.setText(AnnotatedString(bundleUri))
-                                                viewModel.showToastPill("Load Balance Bundle copied to clipboard")
+                                                viewModel.showToastPill("Encrypted Load Balance Bundle copied to clipboard")
                                             }
                                         }
                                     )
@@ -929,22 +933,36 @@ class MainActivity : ComponentActivity() {
 
         if (showCloudImportModal) {
             var cloudUrl by remember { mutableStateOf("") }
+            var cloudPassphrase by remember { mutableStateOf("") }
             AlertDialog(
                 onDismissRequest = { showCloudImportModal = false },
-                title = { Text("Import from Cloud", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("☁️ Import Locked / Cloud Config", fontWeight = FontWeight.ExtraBold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Paste the cloud URL (e.g., https://paste.rs/xyz)", style = MaterialTheme.typography.bodySmall)
-                        OutlinedTextField(value = cloudUrl, onValueChange = { cloudUrl = it }, label = { Text("URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Text("Paste the encrypted cloud URL (e.g., https://paste.rs/xyz)", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = cloudUrl,
+                            onValueChange = { cloudUrl = it },
+                            label = { Text("Cloud URL or svpn://v110/ Link") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = cloudPassphrase,
+                            onValueChange = { cloudPassphrase = it },
+                            label = { Text("Decryption Password (If Set)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         if (cloudUrl.isNotBlank()) {
-                            viewModel.importFromCloudUrl(cloudUrl)
+                            viewModel.importFromCloudUrl(cloudUrl, cloudPassphrase)
                             showCloudImportModal = false
                         }
-                    }) { Text("Import", fontWeight = FontWeight.Bold) }
+                    }) { Text("Decrypt & Import", fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showCloudImportModal = false }) { Text("Cancel") }
@@ -954,27 +972,43 @@ class MainActivity : ComponentActivity() {
 
         if (showQrScannerModal) {
             var manualQrPayload by remember { mutableStateOf("") }
+            var qrPassphrase by remember { mutableStateOf("") }
             AlertDialog(
                 onDismissRequest = { showQrScannerModal = false },
-                title = { Text("Scan / Decode QR Config", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("📷 Scan / Decrypt QR Config", fontWeight = FontWeight.ExtraBold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Paste decoded QR URI or select a config file:", style = MaterialTheme.typography.bodySmall)
-                        OutlinedTextField(value = manualQrPayload, onValueChange = { manualQrPayload = it }, label = { Text("svpn:// / vless:// / vmess:// / trojan://") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Text("Paste locked QR URI (svpn://v110/...) or select a locked .svpn file:", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = manualQrPayload,
+                            onValueChange = { manualQrPayload = it },
+                            label = { Text("Encrypted QR Payload / URI") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = qrPassphrase,
+                            onValueChange = { qrPassphrase = it },
+                            label = { Text("Decryption Password (If Set)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         OutlinedButton(
                             onClick = {
                                 showQrScannerModal = false
                                 try { filePickerLauncher.launch("*/*") } catch (_: Throwable) {}
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Select Config File from Device") }
+                        ) { Text("📁 Select Locked .svpn File from Device") }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        if (manualQrPayload.isNotBlank()) viewModel.importFromClipboard(manualQrPayload)
+                        if (manualQrPayload.isNotBlank()) {
+                            viewModel.importFromClipboard(manualQrPayload, qrPassphrase)
+                        }
                         showQrScannerModal = false
-                    }) { Text("Import", fontWeight = FontWeight.Bold) }
+                    }) { Text("Decrypt & Import", fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showQrScannerModal = false }) { Text("Close") }
@@ -985,7 +1019,7 @@ class MainActivity : ComponentActivity() {
         if (showThemeMenu) {
             AlertDialog(
                 onDismissRequest = { showThemeMenu = false },
-                title = { Text("Smart™vPN v3.5.1 Themes (10 + Auto Day/Night)", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp) },
+                title = { Text("Smart™vPN v1.10 Themes (10 + Auto Day/Night)", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp) },
                 text = {
                     Column(
                         modifier = Modifier
@@ -1027,12 +1061,12 @@ class MainActivity : ComponentActivity() {
         if (showAboutModal) {
             AlertDialog(
                 onDismissRequest = { showAboutModal = false },
-                title = { Text("Smart™vPN v3.5.1 PRO", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("Smart™vPN v1.10 PRO", fontWeight = FontWeight.ExtraBold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Version: 3.5.1 (Build 351)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text("Version: 1.10 (Build 110)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         Text("Hardware 🆔: $hwid", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                        Text("Enterprise Multi-Protocol Stealth VPN supporting 24 protocols, Live Server SHA-256 Fingerprint Verification, Open-Config Lock & Share, and Auto Day/Night Adaptive Themes.", fontSize = 12.sp)
+                        Text("Enterprise Multi-Protocol Stealth VPN supporting 25 protocols (including UDPCUSTOM), Live Server SHA-256 Fingerprint Verification, and PBKDF2-SHA512 + AES-256-GCM AEAD Hardware-Bound Config Locking across File, Cloud, and QR.")
                     }
                 },
                 confirmButton = {
@@ -1053,7 +1087,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun SmartV3UserManualDialog(onDismiss: () -> Unit) {
         var selectedTab by remember { mutableStateOf("All") }
-        val tabs = listOf("All", "⚠️ Tips", "⚡ Speed & Mux", "🌐 Protocols", "⚖️ Multi-Tick", "🔒 Lock & Share")
+        val tabs = listOf("All", "⚠️ Tips", "⚡ Speed & Mux", "🌐 Protocols", "⚖️ Multi-Tick", "🔒 Lock Vault")
 
         Dialog(onDismissRequest = onDismiss) {
             Card(
@@ -1074,7 +1108,7 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("📖 Smart™vPN v3.5.1 User Manual", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                            Text("📖 Smart™vPN v1.10 User Manual", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null) }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1105,19 +1139,34 @@ class MainActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             if (selectedTab in listOf("All", "⚠️ Tips")) {
-                                ManualCard("💡 Important Tips", "• Set Smart™vPN battery usage to Unrestricted.\n• Check the Logs tab during connection to view the server's verified SHA-256 Host Key & TLS Fingerprint.")
+                                ManualCard(
+                                    "💡 Important Tips",
+                                    "• Set Smart™vPN battery usage to Unrestricted.\n• Check the Logs tab to verify your Server SHA-256 Host Key & TLS Certificate Fingerprint."
+                                )
                             }
                             if (selectedTab in listOf("All", "⚡ Speed & Mux")) {
-                                ManualCard("🚀 Turbo Speed & Multiplexing", "• Turbo Mode doubles internal socket buffers and opens parallel SSH/Xray streams so all apps open without delay.")
+                                ManualCard(
+                                    "🚀 Turbo Speed & Multiplexing",
+                                    "• Turbo Mode doubles internal socket buffers and opens parallel SSH/Xray streams for maximum throughput and instant DNS resolution."
+                                )
                             }
                             if (selectedTab in listOf("All", "🌐 Protocols")) {
-                                ManualCard("🌐 24 Supported Protocols", "• 17 SSH/TLS/Payload/Proxy/DNSTT modes, VMess, VLESS Reality, Trojan, ShadowSocks, WireGuard, OpenVPN, and Hysteria2.")
+                                ManualCard(
+                                    "🌐 25 Supported Protocols",
+                                    "• UDPCUSTOM, 17 SSH/TLS/Payload/Proxy/DNSTT modes, VMess, VLESS Reality, Trojan, Shadowsocks, WireGuard, OpenVPN, and Hysteria2."
+                                )
                             }
                             if (selectedTab in listOf("All", "⚖️ Multi-Tick")) {
-                                ManualCard("⚖️ Open vs. Locked Multi-Tick", "• Open imported configs and manual configs can be cloned, edited, locked & shared, and multi-ticked together.\n• Locked imported configs (.svpn with lock enabled) are single-tick only and cannot be shared or edited.")
+                                ManualCard(
+                                    "⚖️ Open vs. Locked Multi-Tick",
+                                    "• Open imported configs and manual configs can be multi-ticked together.\n• Locked configs run in dedicated single-tunnel enclave mode."
+                                )
                             }
-                            if (selectedTab in listOf("All", "🔒 Lock & Share")) {
-                                ManualCard("🔒 Open File Lock & Share", "• Import any open URI via Clipboard, tap 🔗 on the card, and select 'Lock & Export Config 🔒' to lock it and share with your users.")
+                            if (selectedTab in listOf("All", "🔒 Lock Vault")) {
+                                ManualCard(
+                                    "🔒 AES-256-GCM + PBKDF2-SHA512 Lock",
+                                    "• Tap 🔒 on any open/manual profile to encrypt & lock via File (.svpn), Cloud link, or QR Code with HWID binding, password protection, and anti-sniffer locks."
+                                )
                             }
                         }
                     }
@@ -1177,15 +1226,18 @@ class MainActivity : ComponentActivity() {
 
     private fun startVpnService() {
         VpnStateBridge.updateState("CONNECTING", "CONNECTING...")
-        ContextCompat.startForegroundService(this, Intent(this, SmartVpnService::class.java).apply { action = SmartVpnService.ACTION_START })
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, SmartVpnService::class.java).apply { action = SmartVpnService.ACTION_START }
+        )
     }
 
     private fun shareSmartVpnApp() {
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Smart™vPN v3.5.1 PRO")
-                putExtra(Intent.EXTRA_TEXT, "Download Smart™vPN v3.5.1 PRO — Multi-Protocol Stealth VPN Tunnel (https://t.me/Smartking4luV)")
+                putExtra(Intent.EXTRA_SUBJECT, "Smart™vPN v1.10 PRO")
+                putExtra(Intent.EXTRA_TEXT, "Download Smart™vPN v1.10 PRO — 25-Protocol Stealth VPN Tunnel (https://t.me/Smartking4luV)")
             }
             startActivity(Intent.createChooser(sendIntent, "Share Smart™vPN"))
         } catch (_: Throwable) {}
