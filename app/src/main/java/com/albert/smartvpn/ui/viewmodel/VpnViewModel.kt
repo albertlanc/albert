@@ -59,7 +59,7 @@ object VpnStateBridge {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         val ip = getLocalIpAddress()
         return listOf(
-            "[$time] Smart™vPN v3.5.1 (351)",
+            "[$time] Smart™vPN v1.10 (110)",
             "[$time] Running on ${Build.MANUFACTURER} (${Build.MODEL})",
             "[$time] Android ${Build.VERSION.RELEASE} API-${Build.VERSION.SDK_INT} ($abi)",
             "[$time] IP Address $ip",
@@ -95,7 +95,6 @@ object VpnStateBridge {
     val loadBalancingEnabled = MutableStateFlow(false)
     val turboSpeedEnabled = MutableStateFlow(true)
     val slowDnsBoostEnabled = MutableStateFlow(false)
-
     val pingResultText = MutableStateFlow("Connect VPN to test live tunnel latency")
     val isPinging = MutableStateFlow(false)
     val toastMessage = MutableStateFlow("")
@@ -103,7 +102,7 @@ object VpnStateBridge {
     val sshCompression = MutableStateFlow(false)
     val tcpNoDelay = MutableStateFlow(true)
     val xrayMuxEnabled = MutableStateFlow(true)
-    val udpCustomEnabled = MutableStateFlow(false)
+    val udpCustomEnabled = MutableStateFlow(true)
     val autoReconnect = MutableStateFlow(true)
     val pingIntervalSec = MutableStateFlow(15)
     val udpgwPort = MutableStateFlow(7300)
@@ -111,11 +110,12 @@ object VpnStateBridge {
     val customDns2 = MutableStateFlow("8.8.8.8")
     val localSocksPort = MutableStateFlow(10808)
     val cpuWakeLock = MutableStateFlow(true)
+
     val hotshareEnabled = MutableStateFlow(false)
     val hotshareIp = MutableStateFlow("192.168.43.1")
     val shareNetPort = MutableStateFlow(10809)
-    val dontShowManualOnStartup = MutableStateFlow(false)
 
+    val dontShowManualOnStartup = MutableStateFlow(false)
     val activeDrawerScreen = MutableStateFlow("NONE")
     val pendingGeneratedPayload = MutableStateFlow("")
 
@@ -139,7 +139,7 @@ object VpnStateBridge {
     }
 
     fun addDebugOnlyLog(message: String) {
-        Log.d("SmartVPN-v3.5.1", message)
+        Log.d("SmartVPN-v1.10", message)
     }
 
     fun addLog(message: String) {
@@ -155,8 +155,8 @@ object VpnStateBridge {
     fun getDeviceHardwareId(context: Context): String {
         cachedHwid?.let { return it }
         val rawId = try {
-            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV351"
-        } catch (_: Throwable) { "SMARTV351" }
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "SMARTV110"
+        } catch (_: Throwable) { "SMARTV110" }
         val digest = MessageDigest.getInstance("SHA-256").digest(rawId.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02X".format(it) }.take(12)
         return "SVPN-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}".also { cachedHwid = it }
@@ -261,6 +261,7 @@ object ConfigCryptoHelper {
         }
         val combined = try { Base64.decode(b64.trim(), Base64.NO_WRAP or Base64.URL_SAFE) } catch (_: Throwable) { return null }
         if (combined.size <= 12) return null
+
         val iv = combined.copyOfRange(0, 12)
         val cipherText = combined.copyOfRange(12, combined.size)
 
@@ -387,10 +388,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 profile.server.ifBlank { "1.1.1.1" }
             }
-            val targetPort = if (profile.protocol.contains("DNSTT") || profile.protocol == "SLOWDNS") {
-                profile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
-            } else {
-                profile.port
+            val targetPort = when {
+                profile.protocol.contains("DNSTT") || profile.protocol == "SLOWDNS" ->
+                    profile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
+                profile.protocol == "UDPCUSTOM" -> 22
+                else -> profile.port
             }
             VpnStateBridge.toastMessage.value = "Pinging $targetHost..."
             val rtt = try {
@@ -423,11 +425,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             VpnStateBridge.toastMessage.value = "Pinging ${currentList.size} configuration(s)..."
             for (profile in currentList) {
                 val targetHost = profile.server.ifBlank { "1.1.1.1" }
+                val targetPort = if (profile.protocol == "UDPCUSTOM") 22 else profile.port
                 val rtt = try {
                     val t0 = System.currentTimeMillis()
                     Socket().use { s ->
                         s.tcpNoDelay = true
-                        s.connect(InetSocketAddress(targetHost.trim(), profile.port), 3000)
+                        s.connect(InetSocketAddress(targetHost.trim(), targetPort), 3000)
                     }
                     (System.currentTimeMillis() - t0).toInt().coerceAtLeast(1)
                 } catch (_: Throwable) {
@@ -452,10 +455,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 activeProfile.server.ifBlank { "1.1.1.1" }
             }
-            val targetPort = if (activeProfile.protocol.contains("DNSTT") || activeProfile.protocol == "SLOWDNS") {
-                activeProfile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
-            } else {
-                activeProfile.port
+            val targetPort = when {
+                activeProfile.protocol.contains("DNSTT") || activeProfile.protocol == "SLOWDNS" ->
+                    activeProfile.slowDnsServerIp.substringAfter(":", "53").toIntOrNull() ?: 53
+                activeProfile.protocol == "UDPCUSTOM" -> 22
+                else -> activeProfile.port
             }
             try {
                 val t0 = System.currentTimeMillis()
@@ -506,6 +510,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 showToastPill("Clipboard is empty")
                 return@launch
             }
+
             val bundle = ConfigCryptoHelper.importBundleUri(cleanText)
             if (!bundle.isNullOrEmpty()) {
                 dao.clearSelection()
@@ -523,6 +528,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 ConfigCryptoHelper.importProfileUri(cleanText, passphrase, myHwid)
                     ?: VpnConfigParser.parseUri(cleanText)
             }
+
             if (parsed != null) {
                 if (parsed.isLocked) {
                     dao.clearSelection()
